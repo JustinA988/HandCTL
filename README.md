@@ -76,6 +76,8 @@ How it avoids misfires and missed input:
 
 Both hands are tracked automatically. With one hand in view, it does everything. With both in view, the *pointer hand* (right by default; change it under **Settings → Hands**) only moves the cursor, whatever shape it makes, and the *other hand* does everything else. That way the pointer never moves when you click, and pinching with one hand while moving the other drags. A hand that drops out of view for a moment doesn't change who does what, and a drag in progress is never cut off by the other hand appearing. Hands are told apart by where they are in the picture, not by MediaPipe's left/right guess, which flips when a hand turns sideways.
 
+To keep this fast, the app tracks with the cheaper one-hand mode and checks for a second hand four times a second, so a second hand is noticed within about a quarter of a second of appearing. (Always looking for two hands made every frame about 9 ms slower, even with one hand in view.)
+
 If a second hand gets in the way (for example while typing), set **Settings → Hands → Hand mode** to **one**: only one hand is ever tracked.
 
 Remap anything under the **Gestures** tab: an action is a mouse action (`move`, `left`, `right`, `scroll`), a key combo (`<ctrl>+<alt>+t`, `<cmd>+d`, `<media_next>`, in [pynput's HotKey format](https://pynput.readthedocs.io/en/latest/keyboard.html#global-hotkeys)), or a shell command.
@@ -108,7 +110,14 @@ With two or more monitors, open **Settings → Monitors → Calibrate monitors**
 
 The camera has to see your face while you look at each monitor. A monitor you can only see by turning away from the camera is left out, and the calibration tells you so. Calibrate again after moving the camera or your monitors. Turn switching off with the checkbox on the same tab.
 
-Settings are stored in `%APPDATA%\handctl\config.json`. If that file is unreadable it is moved to `config.json.bak` and defaults are used.
+Settings are stored in `%APPDATA%\handctl\config.json`. You can edit it by hand (Notepad is fine). If it can't be parsed it is moved to `config.json.bak` and defaults are used, so a typo never crashes the app.
+
+## If the cursor lags
+
+- The delay between your hand and the cursor is the camera frame plus about 12 to 35 ms of hand tracking, plus the smoothing. Smoothing is the part you control: under **Settings → Cursor**, raise **Responsiveness** (and **Steadiness**) for less lag, lower them for less jitter. Simulated lag at 30 FPS for a slow hand movement: Steadiness 5 / Responsiveness 20 trails about 17 ms, 1 / 10 about 38 ms, 0.5 / 2 about 96 ms.
+- **Hand mode: one** is the fastest setting (about 9 ms a frame faster than auto while two hands are in view).
+- Keep the room lit: in dim light cameras drop their frame rate, which adds delay however fast the app is.
+- Leaving the settings window open costs a little speed (it draws the preview 15 times a second).
 
 ## Tests
 

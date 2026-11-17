@@ -6,7 +6,7 @@ import types
 import pytest
 
 from handctl import config, wizard
-from handctl.tracker import ANY, Tracker
+from handctl.tracker import ANY, HandCount, Tracker
 
 from test_gestures import cfg, world
 
@@ -97,6 +97,23 @@ def test_a_drag_is_not_cut_off_when_the_second_hand_appears(qapp, quiet):
     for i in range(20, 30):
         frame(t, i * 0.033, ("Right", "None", 0.7, world()), open_left)  # fingers part: drag ends, then roles split
     assert "release" in [e[0] for e in quiet] and roles(t) == {"Right": "pointer", "Left": "action"}
+
+
+def test_hand_count_uses_the_cheap_recognizer_and_probes_for_a_second_hand():
+    c = HandCount()
+    assert c.wants_two(0.0)  # the first frame checks for a second hand
+    c.saw(0.0, True, 1)
+    used = [c.wants_two(0.033 * i) for i in range(1, 8)]
+    assert not any(used)  # frames in the next 0.23 s use the one-hand recognizer
+    assert c.wants_two(0.26)  # then another check
+    c.saw(0.26, True, 1)
+    assert not c.two and not c.wants_two(0.30)
+    c.saw(0.51, True, 2)  # a second hand arrived: stay on the two-hand recognizer
+    assert c.two and c.wants_two(0.54) and c.wants_two(0.9)
+    c.saw(0.57, True, 1)  # one frame without the second hand (a tracking hiccup) changes nothing
+    assert c.two
+    c.saw(1.7, True, 1)  # missing for over a second: back to the cheap recognizer
+    assert not c.two and not c.wants_two(1.75) and c.wants_two(1.96)
 
 
 def test_no_hand_in_view(qapp):

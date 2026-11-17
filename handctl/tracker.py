@@ -1,5 +1,6 @@
 """Camera thread: frames -> MediaPipe -> Classifier -> Engine(s) -> actions, plus preview frames for the UI.
 When monitor switching is on, it also reads the face a few times a second to see which monitor the user looks at."""
+import contextlib
 import logging
 import time
 from pathlib import Path
@@ -21,6 +22,7 @@ MODEL = Path(__file__).parent / "models" / "gesture_recognizer.task"
 FACE_MODEL = MODEL.with_name("face_landmarker.task")
 ANY = "Hand"  # one-hand mode tracks whichever hand shows up
 LOOK_EVERY = 0.15  # seconds between face readings: plenty for choosing a monitor, and it keeps hand tracking fast
+PREVIEW_EVERY = 1 / 15  # the settings window needs 15 pictures a second, not every frame
 
 
 def list_cameras(limit=5):
@@ -32,6 +34,31 @@ def list_cameras(limit=5):
             found.append(i)
         cap.release()
     return found
+
+
+class HandCount:
+    """Which MediaPipe recognizer the next frame should use. Asking it for two hands costs about 12 ms more per frame
+    than one (it hunts for a second hand every frame), so the one-hand recognizer does the tracking and the two-hand
+    one only runs while a second hand is there, plus a quick check a few times a second to notice when one arrives."""
+    PROBE_EVERY = 0.25  # seconds between checks for a second hand: the most it can take to notice one
+    KEEP = 1.0  # seconds a second hand may be missing before dropping back to the cheaper recognizer
+
+    def __init__(self):
+        self.two, self.next_probe, self.last_pair = False, 0.0, 0.0
+
+    def wants_two(self, t):
+        return self.two or t >= self.next_probe
+
+    def saw(self, t, used_two, found):
+        """Report what the recognizer used for this frame found."""
+        if not used_two:
+            return
+        if found >= 2:
+            self.two, self.last_pair = True, t
+        elif self.two and t - self.last_pair > self.KEEP:
+            self.two = False
+        if not self.two:
+            self.next_probe = t + self.PROBE_EVERY
 
 
 class Tracker(QThread):
@@ -71,16 +98,14 @@ class Tracker(QThread):
             return
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)  # shortcut: higher resolutions drop to ~4 FPS on this CPU with a hand in view
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        # shortcut: 0.3 instead of MediaPipe's 0.5 so a tilted or edge-on hand is dropped less often; untested guess,
-        # raise it if the tracker starts seeing hands that aren't there
-        options = GestureRecognizerOptions(
-            base_options=BaseOptions(model_asset_path=str(MODEL)), running_mode=RunningMode.VIDEO, num_hands=len(self.engines),
-            min_hand_detection_confidence=0.3, min_hand_presence_confidence=0.3, min_tracking_confidence=0.3)
-        face, last_ms, next_look = None, 0, 0.0
+        face, last_ms, next_look, next_preview = None, 0, 0.0, 0.0
+        counter = HandCount()
         try:
             face = self._open_face()
             self._start_monitors()
-            with GestureRecognizer.create_from_options(options) as recognizer:
+            with contextlib.ExitStack() as models:
+                one = models.enter_context(GestureRecognizer.create_from_options(self._options(1)))
+                two = models.enter_context(GestureRecognizer.create_from_options(self._options(2))) if len(self.engines) == 2 else None
                 while not self.isInterruptionRequested():
                     ok, frame = cap.read()
                     if not ok:
@@ -94,18 +119,31 @@ class Tracker(QThread):
                         frame = cv2.flip(frame, 1)
                     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     last_ms = max(last_ms + 1, int(t * 1000))  # MediaPipe requires strictly increasing timestamps
-                    result = recognizer.recognize_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), last_ms)
+                    use_two = two is not None and counter.wants_two(t)
+                    result = (two if use_two else one).recognize_for_video(
+                        mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), last_ms)
+                    if two is not None:
+                        counter.saw(t, use_two, len(result.hand_landmarks))
                     hands = self._read(result, t)
                     self._step(t, hands)
                     self.sample.emit(hands)
-                    if self.preview:
-                        self._emit(rgb, hands)
+                    if self.preview and t >= next_preview:
+                        next_preview = t + PREVIEW_EVERY
+                        self._emit(rgb, hands)  # drawing and handing frames to the window takes time from tracking
         finally:
             cap.release()
             if face:
                 face.close()
             self._release()  # never leave the mouse button stuck down
             actions.look_at(None)  # the hand maps to the whole desktop again once tracking stops
+
+    @staticmethod
+    def _options(hands):
+        # shortcut: 0.3 instead of MediaPipe's 0.5 so a tilted or edge-on hand is dropped less often; untested guess,
+        # raise it if the tracker starts seeing hands that aren't there
+        return GestureRecognizerOptions(
+            base_options=BaseOptions(model_asset_path=str(MODEL)), running_mode=RunningMode.VIDEO, num_hands=hands,
+            min_hand_detection_confidence=0.3, min_hand_presence_confidence=0.3, min_tracking_confidence=0.3)
 
     def _open_face(self):
         if not self.face:

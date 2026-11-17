@@ -24,8 +24,8 @@ DEFAULTS = {
     "shell_enabled": False,
     "autostart": False,
     "box": [0.2, 0.2, 0.8, 0.8],  # cursor area in the camera frame: left, top, right, bottom (0-1)
-    "min_cutoff": 0.5,  # steadiness: lower = less jitter when the hand is still (0.5 cut jitter ~3.9x in testing)
-    "beta": 2.0,  # responsiveness: higher = less lag on fast moves (2.0 still reaches 90% of a fast move in ~67 ms)
+    "min_cutoff": 1.0,  # steadiness: lower = less jitter when the hand is still (1.0: jitter cut ~2.3x in simulation)
+    "beta": 10.0,  # responsiveness: higher = less lag (10: cursor trails the hand ~38 ms on slow moves, ~8 ms on fast ones)
     "pinch_threshold": 0.4,  # thumb-to-fingertip distance in hand sizes; looser than before so a relaxed pinch clicks
     "hold_ms": 100,  # how long a pose (fist, thumbs, peace, I-love-you) must be held before it acts; pinches are faster
     "drag_ms": 300,
@@ -50,7 +50,7 @@ def load(path=PATH):
     if not path.exists():
         return cfg
     try:
-        data = json.loads(path.read_text("utf-8"))
+        data = json.loads(path.read_text("utf-8-sig"))  # -sig: Notepad and PowerShell add a byte-order mark; that's not corruption
         if not isinstance(data, dict):
             raise ValueError("top level is not an object")
     except (OSError, ValueError) as e:

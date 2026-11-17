@@ -207,6 +207,22 @@ def test_one_euro_steadies_still_hand_and_keeps_up_with_fast_moves():
     assert out[-1] > 0.8  # reaches the target within ~150 ms, not seconds later
 
 
+def test_default_smoothing_balances_steadiness_and_lag():
+    """Guards the trade-off: steadier settings add lag, snappier ones add jitter. Simulated at 30 fps."""
+    import statistics
+    mc, beta = config.DEFAULTS["min_cutoff"], config.DEFAULTS["beta"]
+    random.seed(1)
+    raw = [0.5 + random.gauss(0, 0.01) for _ in range(600)]  # a hand held still, with sensor noise
+    f = OneEuro(mc, beta)
+    smooth = [f(v, i / 30) for i, v in enumerate(raw)]
+    assert statistics.pstdev(raw[100:]) / statistics.pstdev(smooth[100:]) > 2.0  # at least twice as steady as the raw signal
+    f = OneEuro(mc, beta)
+    for i in range(200):  # a slow, careful hand movement (0.15 of the cursor area per second)
+        t = i / 30
+        out = f(0.15 * t, t)
+    assert (0.15 * t - out) / 0.15 < 0.05  # the cursor trails the hand by under 50 ms
+
+
 # --- settings file --------------------------------------------------------------------------------------------------
 
 def test_defaults_are_valid_and_bad_values_rejected():
@@ -229,6 +245,14 @@ def test_load_backs_up_broken_file_and_ignores_wrong_types(tmp_path):
     assert loaded["camera"] == 0 and loaded["beta"] == 2 and "unknown" not in loaded
     p.write_text(json.dumps({"version": 3, "box": [1, 2], "mappings": {"Pinch": {"type": "keys"}, "Thumb_Up": "x"}}))
     assert config.load(p) == config.DEFAULTS  # malformed values fall back instead of crashing tracking
+
+
+def test_a_settings_file_with_a_byte_order_mark_is_read_not_discarded(tmp_path):
+    p = tmp_path / "config.json"
+    p.write_bytes(b"\xef\xbb\xbf" + json.dumps({"version": 3, "camera": 1, "hold_ms": 100}).encode())  # what Notepad writes
+    loaded = config.load(p)
+    assert loaded["camera"] == 1 and loaded["hold_ms"] == 100
+    assert p.exists() and not (tmp_path / "config.json.bak").exists()  # the user's file stays where it is
 
 
 def test_older_settings_keep_camera_but_get_new_gesture_mappings(tmp_path):
