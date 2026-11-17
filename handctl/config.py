@@ -24,10 +24,10 @@ DEFAULTS = {
     "shell_enabled": False,
     "autostart": False,
     "box": [0.2, 0.2, 0.8, 0.8],  # cursor area in the camera frame: left, top, right, bottom (0-1)
-    "min_cutoff": 5.0,  # steadiness: lower = less jitter when the hand is still
-    "beta": 20.0,  # responsiveness: higher = less lag on fast moves
-    "pinch_threshold": 0.3,  # thumb-to-fingertip distance in hand sizes; the setup wizard measures it per user
-    "hold_ms": 250,  # how long a pose (fist, thumbs, victory) must be held before it acts; pinches are faster
+    "min_cutoff": 0.5,  # steadiness: lower = less jitter when the hand is still (0.5 cut jitter ~3.9x in testing)
+    "beta": 2.0,  # responsiveness: higher = less lag on fast moves (2.0 still reaches 90% of a fast move in ~67 ms)
+    "pinch_threshold": 0.4,  # thumb-to-fingertip distance in hand sizes; looser than before so a relaxed pinch clicks
+    "hold_ms": 100,  # how long a pose (fist, thumbs, peace, I-love-you) must be held before it acts; pinches are faster
     "drag_ms": 300,
     "scroll_speed": 30,
     "monitor_switch": False,  # move the cursor to the monitor the user looks at

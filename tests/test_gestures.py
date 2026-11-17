@@ -93,8 +93,8 @@ def test_poses():
 
 
 def test_pinch_does_not_flicker_near_the_threshold():
-    c = Classifier(cfg())
-    assert pose(c, thumb="near") == "Hand"  # 0.4 hand sizes apart: not close enough to start a pinch
+    c = Classifier(cfg(pinch_threshold=0.3))
+    assert pose(c, thumb="near") == "Hand"  # 0.4 hand sizes apart: not close enough to start a pinch at 0.3
     assert pose(c, thumb="index") == "Pinch"
     assert pose(c, thumb="near") == "Pinch"  # ...but not far enough to end one
     assert pose(c, "Thumb_Up", 0.9, thumb="near") == "Pinch"  # a held pinch (a drag) isn't interrupted by a misread pose
@@ -141,8 +141,9 @@ def test_held_pinch_drags_and_survives_a_tracking_dropout():
 
 def test_pose_must_be_held_before_it_fires_and_respects_cooldown():
     e = Engine(cfg())
-    assert run(e, hold("Victory", 0, 0.2)) == []
-    events = run(e, hold("Victory", 0.2, 0.5))
+    assert config.DEFAULTS["hold_ms"] == 100
+    assert run(e, hold("Victory", 0, 0.07)) == []  # a flash of the pose, shorter than the 100 ms hold, does nothing
+    events = run(e, hold("Victory", 0.07, 0.5))
     assert [ev[1]["value"] for ev in events] == ["<media_play_pause>"]
     again = run(e, hold("Hand", 0.5, 0.7) + hold("Victory", 0.7, 1.3))
     assert "run" not in kinds(again)  # held long enough, but still inside the 1500 ms cooldown
