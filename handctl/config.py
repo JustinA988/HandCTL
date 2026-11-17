@@ -30,6 +30,8 @@ DEFAULTS = {
     "hold_ms": 250,  # how long a pose (fist, thumbs, victory) must be held before it acts; pinches are faster
     "drag_ms": 300,
     "scroll_speed": 30,
+    "monitor_switch": False,  # move the cursor to the monitor the user looks at
+    "monitor_gaze": {},  # monitor device name -> [yaw, pitch] of the gaze when looking at it, from the calibration
     "mappings": {
         "Hand": {"type": "mouse", "value": "move"},  # any open or relaxed hand
         "Pinch": {"type": "mouse", "value": "left"},
@@ -95,6 +97,10 @@ def validate(cfg):
         errors.append("Cursor area: left/top must be smaller than right/bottom, all between 0 and 1.")
     if cfg["hand_mode"] not in ("single", "two") or cfg["hand"] not in ("Right", "Left"):
         errors.append("Hand mode must be single or two, and the hand Right or Left.")
+    if not all(isinstance(p, list) and len(p) == 2 and all(type(v) in (int, float) for v in p) for p in cfg["monitor_gaze"].values()):
+        errors.append("Monitor calibration data is damaged. Run the monitor calibration again.")
+    if cfg["monitor_switch"] and len(cfg["monitor_gaze"]) < 2:
+        errors.append("Monitor switching needs a calibration first: Settings > Monitors > Calibrate monitors.")
     combos = [("Toggle hotkey", cfg["toggle_hotkey"])]
     for name, m in cfg["mappings"].items():
         if m["type"] == "keys":

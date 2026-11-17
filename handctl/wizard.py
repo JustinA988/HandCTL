@@ -1,12 +1,16 @@
-"""First-run setup wizard: camera, cursor area, pinch calibration, then a live check of each gesture."""
+"""Setup flows: the first-run wizard (camera, cursor area, pinch calibration, gesture check) and the monitor calibration."""
 import copy
+import ctypes
+import math
 import statistics
 import time
 
-from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QComboBox, QLabel, QPushButton, QVBoxLayout, QWizard, QWizardPage
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QGuiApplication, QPixmap
+from PySide6.QtWidgets import QComboBox, QDialog, QLabel, QPushButton, QVBoxLayout, QWizard, QWizardPage
 
-from . import config
+from . import actions, config
+from .gaze import calibrate
 
 CHECK = [  # (gesture, what to do)
     ("Hand", "Hold up an open, relaxed hand (this moves the cursor)"),
@@ -224,5 +228,98 @@ class Wizard(QWizard):
         self.app.calibrating = False
         config.save(cfg)
         self.app.apply(cfg)
+        self.settings.load(cfg)
+        super().done(result)
+
+
+class MonitorCalibration(QDialog):
+    """Shows a window on each monitor in turn and records where the user's gaze points while they look at it."""
+    READY, HOLD = 2.5, 2.5  # seconds to turn and look, then seconds recorded, per monitor
+
+    def __init__(self, settings):
+        super().__init__(settings)
+        self.settings, self.app = settings, settings.app
+        self.setWindowTitle("handctl monitor calibration")
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint)
+        self.resize(560, 280)
+        self.text = QLabel()
+        self.text.setWordWrap(True)
+        self.text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        font = self.text.font()
+        font.setPointSize(14)
+        self.text.setFont(font)
+        self.close_button = QPushButton("Close")
+        self.close_button.clicked.connect(self.accept)
+        self.close_button.hide()
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.text, 1)
+        layout.addWidget(self.close_button)
+        self.rects = dict(sorted(actions.monitors().items(), key=lambda item: (item[1][0], item[1][1])))
+        self.labels = {name: f"Monitor {i + 1}" for i, name in enumerate(self.rects)}  # numbered left to right
+        self.samples = {name: [] for name in self.rects}
+        self.index, self.recording, self.phase_end, self.saved = -1, False, 0.0, None
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.tick)
+        self.app.calibrating = self.app.force_face = True  # cursor control off, face reading on
+        self.app.look_hook = self.on_look
+        self.app.apply(self.app.cfg)
+
+    def showEvent(self, event):
+        if self.index < 0:
+            self.next_monitor()
+            self.timer.start(100)
+
+    def next_monitor(self):
+        self.index += 1
+        if self.index >= len(self.rects):
+            self.finish()
+            return
+        self.recording, self.phase_end = False, time.monotonic() + self.READY
+        if QGuiApplication.platformName() == "windows":
+            # placed through Windows in real pixels: Qt's own coordinates differ from them on scaled displays
+            left, top, width, height = list(self.rects.values())[self.index]
+            ctypes.windll.user32.SetWindowPos(int(self.winId()), 0, left + width // 2 - 280, top + height // 2 - 140, 0, 0, 0x0015)
+        self.tick()
+
+    def tick(self):
+        if not 0 <= self.index < len(self.rects):
+            return
+        left = self.phase_end - time.monotonic()
+        if left <= 0 and self.recording:
+            self.next_monitor()
+            return
+        if left <= 0:
+            self.recording, self.phase_end, left = True, time.monotonic() + self.HOLD, self.HOLD
+        if self.recording:
+            self.text.setText(f"Keep looking at this window...\n{math.ceil(left)}")
+        else:
+            label = list(self.labels.values())[self.index]
+            self.text.setText(f"{label} of {len(self.rects)}: look at this window.\nRecording starts in {math.ceil(left)}")
+
+    def on_look(self, seen):
+        if self.recording and seen and 0 <= self.index < len(self.rects):
+            self.samples[list(self.rects)[self.index]].append(seen)
+
+    def finish(self):
+        self.timer.stop()
+        self.recording = False
+        points, problems = calibrate(self.samples, self.labels.get)
+        if len(points) >= 2:
+            self.saved = copy.deepcopy(self.app.cfg)
+            self.saved["monitor_gaze"] = {name: [round(v, 1) for v in point] for name, point in points.items()}
+            self.saved["monitor_switch"] = True
+            config.save(self.saved)
+            head = f"Done. The cursor now follows your gaze between {', '.join(self.labels[name] for name in points)}."
+        else:
+            head = "Calibration didn't work, so monitor switching was left as it was."
+        self.text.setText("\n".join([head] + problems))
+        self.close_button.show()
+
+    def done(self, result):
+        self.timer.stop()
+        self.app.look_hook = None
+        self.app.calibrating = self.app.force_face = False
+        cfg = self.saved or self.app.cfg
+        self.app.apply(cfg)  # restarts tracking with the new calibration, or the old settings if it failed
         self.settings.load(cfg)
         super().done(result)

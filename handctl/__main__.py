@@ -15,9 +15,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from . import config
+from . import actions, config
 from .tracker import Tracker, list_cameras
-from .wizard import Wizard
+from .wizard import MonitorCalibration, Wizard
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 HANDS_HELP = (
@@ -25,6 +25,13 @@ HANDS_HELP = (
     "Two: the pointer hand only moves the cursor, whatever shape it makes. The other hand does everything else: "
     "pinch to click, fist to scroll, thumbs for volume, peace sign for play/pause. Clicking with the other hand "
     "means the pointer never moves when you click."
+)
+MONITORS_HELP = (
+    "With two or more monitors, your hand controls the monitor you are looking at, and the cursor jumps to it when "
+    "you look across. Both head turns and eye movement count.\n"
+    "Calibration shows a window on each monitor in turn: look at each one for a few seconds. Your face has to stay "
+    "visible to the camera, so a monitor you can only see by turning away from the camera is left out. "
+    "Calibrate again if you move the camera or your monitors."
 )
 
 
@@ -139,6 +146,7 @@ class Settings(QWidget):
             "toggle_hotkey": QLineEdit(),
             "shell_enabled": QCheckBox("Allow gestures to run shell commands"),
             "autostart": QCheckBox("Start with Windows"),
+            "monitor_switch": QCheckBox("Move the cursor to the monitor I look at"),
         }
         self.box = [spin(0, 1, 0.05) for _ in range(4)]
         f = self.fields
@@ -202,6 +210,10 @@ class Settings(QWidget):
             "The Preview tab shows a live pinch number: it is small when thumb and finger touch. Set the pinch threshold "
             "between your touching and open values: raise it if pinches don't click, lower it if clicks fire by accident.",
         ), "Gesture tuning")
+        self.monitor_note = QLabel()
+        calibrate = QPushButton("Calibrate monitors")
+        calibrate.clicked.connect(lambda: self.app.calibrate_monitors())
+        sub.addTab(form(f["monitor_switch"], self.monitor_note, calibrate, MONITORS_HELP), "Monitors")
         sub.addTab(form(("Toggle hotkey", f["toggle_hotkey"]), f["shell_enabled"], f["autostart"], wizard), "General")
 
         tabs = QTabWidget()
@@ -237,6 +249,8 @@ class Settings(QWidget):
             put(w, cfg[key])
         for w, v in zip(self.box, cfg["box"]):
             w.setValue(v)
+        calibrated = len(cfg["monitor_gaze"])
+        self.monitor_note.setText(f"Calibrated for {calibrated} monitors." if calibrated >= 2 else "Not calibrated yet.")
         self.put_mappings(cfg["mappings"])
 
     def put_mappings(self, mappings):
@@ -286,8 +300,9 @@ class App:
     def __init__(self, qapp):
         self.cfg = config.load()
         self.tracker = self.hotkey = None
-        self.calibrating = False  # the wizard keeps tracking off while it measures
-        self.sample_hook = self.frame_hook = None  # the wizard listens here
+        self.calibrating = False  # the wizard and the monitor calibration keep tracking off while they measure
+        self.force_face = False  # the monitor calibration needs the face read even while monitor switching is off
+        self.sample_hook = self.frame_hook = self.look_hook = None  # the wizard and the monitor calibration listen here
         self.tray = QSystemTrayIcon(qapp.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
         self.tray.setToolTip("handctl")
         menu = QMenu()
@@ -312,6 +327,13 @@ class App:
         self.show_settings()
         Wizard(self.settings).exec()
 
+    def calibrate_monitors(self):
+        if len(actions.monitors()) < 2:
+            QMessageBox.information(self.settings, "handctl", "Only one monitor is connected, so there is nothing to switch between.")
+            return
+        self.show_settings()
+        MonitorCalibration(self.settings).exec()
+
     def stop(self):
         if self.hotkey:
             self.hotkey.stop()
@@ -322,7 +344,7 @@ class App:
     def apply(self, cfg):
         self.stop()
         self.cfg = cfg
-        self.tracker = Tracker(cfg, enabled=not self.calibrating)
+        self.tracker = Tracker(cfg, enabled=not self.calibrating, face=self.force_face)
         self.tracker.preview = self.settings.isVisible()
 
         def frame(image, text):
@@ -332,6 +354,7 @@ class App:
 
         self.tracker.frame.connect(frame)
         self.tracker.sample.connect(lambda hands: self.sample_hook and self.sample_hook(hands))
+        self.tracker.look.connect(lambda seen: self.look_hook and self.look_hook(seen))
         self.tracker.error.connect(lambda msg: self.tray.showMessage("handctl", msg, QSystemTrayIcon.MessageIcon.Warning))
         self.tracker.toggled.connect(self.toggle_action.setChecked)
         self.toggle_action.setChecked(not self.calibrating)
@@ -351,9 +374,41 @@ def already_running():
     return ctypes.get_last_error() == 183  # ERROR_ALREADY_EXISTS
 
 
+def self_check():
+    """`handctl --check`: proves this copy is complete (both models load and run, monitors can be read) without
+    touching the camera, mouse or keyboard. Returns the exit code: 0 = OK. Details go to handctl-check.log in the temp folder."""
+    import tempfile
+    import traceback
+
+    import mediapipe as mp
+    import numpy as np
+    from mediapipe.tasks.python import BaseOptions
+    from mediapipe.tasks.python.vision import FaceLandmarker, FaceLandmarkerOptions, GestureRecognizer, GestureRecognizerOptions
+
+    from .tracker import FACE_MODEL, MODEL
+
+    log = Path(tempfile.gettempdir()) / "handctl-check.log"
+    try:
+        problems = config.validate(config.DEFAULTS)
+        assert not problems, problems
+        blank = mp.Image(image_format=mp.ImageFormat.SRGB, data=np.zeros((240, 320, 3), np.uint8))
+        with GestureRecognizer.create_from_options(GestureRecognizerOptions(base_options=BaseOptions(model_asset_path=str(MODEL)))) as hands:
+            hands.recognize(blank)
+        with FaceLandmarker.create_from_options(FaceLandmarkerOptions(base_options=BaseOptions(model_asset_path=str(FACE_MODEL)))) as faces:
+            faces.detect(blank)
+        assert actions.monitors(), "no monitors found"
+        log.write_text("ok\n", "utf-8")
+        return 0
+    except Exception:
+        log.write_text(traceback.format_exc(), "utf-8")
+        return 1
+
+
 def main():
     logging.basicConfig(level=logging.INFO)
     qapp = QApplication(sys.argv)
+    if "--check" in sys.argv:
+        sys.exit(self_check())
     if already_running():
         if "--tray" not in sys.argv:  # silent at login (autostart), visible when the user double-clicks
             QMessageBox.information(None, "handctl", "handctl is already running. Look for its tray icon.")

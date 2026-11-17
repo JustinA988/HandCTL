@@ -1,3 +1,5 @@
+import subprocess
+import sys
 import time
 import types
 
@@ -7,6 +9,15 @@ from handctl import config, wizard
 from handctl.tracker import ANY, Tracker
 
 from test_gestures import cfg, world
+
+
+def test_executors_work_even_when_qt_and_concurrent_futures_load_before_handctl():
+    # the order a frozen build produces; on Python 3.15 PySide6 otherwise leaves these names unusable (see handctl/__init__.py)
+    code = ("import PySide6.QtCore, concurrent.futures, handctl\n"
+            "from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor\n"
+            "assert concurrent.futures.ThreadPoolExecutor(max_workers=1).submit(lambda: 42).result() == 42\n"
+            "assert isinstance(ThreadPoolExecutor, type) and isinstance(ProcessPoolExecutor, type)\n")
+    subprocess.run([sys.executable, "-c", code], check=True)
 
 
 # --- tracker: reading one or two hands ---------------------------------------------------------------------------

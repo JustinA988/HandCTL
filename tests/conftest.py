@@ -23,7 +23,7 @@ def fake_app(qapp, monkeypatch):
     saved, applied = [], []
     monkeypatch.setattr(config, "save", lambda cfg, *a: saved.append(copy.deepcopy(cfg)))
     return types.SimpleNamespace(
-        cfg=copy.deepcopy(config.DEFAULTS), saved=saved, applied=applied, calibrating=False,
-        tracker=types.SimpleNamespace(preview=False, enabled=True), sample_hook=None, frame_hook=None,
+        cfg=copy.deepcopy(config.DEFAULTS), saved=saved, applied=applied, calibrating=False, force_face=False,
+        tracker=types.SimpleNamespace(preview=False, enabled=True), sample_hook=None, frame_hook=None, look_hook=None,
         toggle_action=types.SimpleNamespace(setChecked=lambda v: None),
         apply=lambda cfg: applied.append(cfg), stop=lambda: None)

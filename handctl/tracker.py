@@ -1,4 +1,5 @@
-"""Camera thread: frames -> MediaPipe -> Classifier -> Engine(s) -> actions, plus preview frames for the UI."""
+"""Camera thread: frames -> MediaPipe -> Classifier -> Engine(s) -> actions, plus preview frames for the UI.
+When monitor switching is on, it also reads the face a few times a second to see which monitor the user looks at."""
 import logging
 import time
 from pathlib import Path
@@ -6,15 +7,20 @@ from pathlib import Path
 import cv2
 import mediapipe as mp
 from mediapipe.tasks.python import BaseOptions
-from mediapipe.tasks.python.vision import GestureRecognizer, GestureRecognizerOptions, RunningMode
+from mediapipe.tasks.python.vision import (
+    FaceLandmarker, FaceLandmarkerOptions, GestureRecognizer, GestureRecognizerOptions, RunningMode,
+)
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QImage
 
 from . import actions
+from .gaze import Selector, gaze
 from .gestures import Classifier, Engine, anchor, assign
 
 MODEL = Path(__file__).parent / "models" / "gesture_recognizer.task"
+FACE_MODEL = MODEL.with_name("face_landmarker.task")
 ANY = "Hand"  # single-hand mode tracks whichever hand shows up
+LOOK_EVERY = 0.15  # seconds between face readings: plenty for choosing a monitor, and it keeps hand tracking fast
 
 
 def list_cameras(limit=5):
@@ -31,10 +37,12 @@ def list_cameras(limit=5):
 class Tracker(QThread):
     frame = Signal(QImage, str)
     sample = Signal(object)  # every frame: {side: {"gesture", "pos", "lm", "feat"}}, for the setup wizard
+    look = Signal(object)  # each face reading: (yaw, pitch) of the gaze, or None when no face is visible
     error = Signal(str)
     toggled = Signal(bool)
 
-    def __init__(self, cfg, enabled=True):
+    def __init__(self, cfg, enabled=True, face=False):
+        """face=True reads the face even when monitor switching is off (the monitor calibration needs it)."""
         super().__init__()
         self.cfg = cfg
         self.enabled = enabled
@@ -46,6 +54,9 @@ class Tracker(QThread):
             self.engines = {ANY: Engine(cfg)}
         self.classifiers = {side: Classifier(cfg) for side in self.engines}
         self.last = {}  # side -> (time, position) it was last seen at
+        self.switching = cfg["monitor_switch"] and len(cfg["monitor_gaze"]) >= 2
+        self.face = face or self.switching
+        self.selector = self.target = None  # which monitor the user looks at, once monitor switching has started
 
     def toggle(self):
         self.enabled = not self.enabled
@@ -66,18 +77,23 @@ class Tracker(QThread):
         options = GestureRecognizerOptions(
             base_options=BaseOptions(model_asset_path=str(MODEL)), running_mode=RunningMode.VIDEO, num_hands=len(self.engines),
             min_hand_detection_confidence=0.3, min_hand_presence_confidence=0.3, min_tracking_confidence=0.3)
-        last_ms = 0
+        face, last_ms, next_look = None, 0, 0.0
         try:
+            face = self._open_face()
+            self._start_monitors()
             with GestureRecognizer.create_from_options(options) as recognizer:
                 while not self.isInterruptionRequested():
                     ok, frame = cap.read()
                     if not ok:
                         self.error.emit("Camera stopped sending frames.")
                         break
+                    t = time.monotonic()
+                    if face and t >= next_look:
+                        next_look = t + LOOK_EVERY
+                        self._look(t, face, frame)  # the unmirrored frame, so the mirror setting can't flip left and right
                     if self.cfg["mirror"]:
                         frame = cv2.flip(frame, 1)
                     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    t = time.monotonic()
                     last_ms = max(last_ms + 1, int(t * 1000))  # MediaPipe requires strictly increasing timestamps
                     result = recognizer.recognize_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), last_ms)
                     hands = self._read(result, t)
@@ -87,7 +103,50 @@ class Tracker(QThread):
                         self._emit(rgb, hands)
         finally:
             cap.release()
+            if face:
+                face.close()
             self._release()  # never leave the mouse button stuck down
+            actions.look_at(None)  # the hand maps to the whole desktop again once tracking stops
+
+    def _open_face(self):
+        if not self.face:
+            return None
+        if not FACE_MODEL.exists():
+            self.error.emit(f"Face model missing: {FACE_MODEL}. Monitor switching is off; see README for the download step.")
+            return None
+        return FaceLandmarker.create_from_options(
+            FaceLandmarkerOptions(base_options=BaseOptions(model_asset_path=str(FACE_MODEL)), num_faces=1))
+
+    def _start_monitors(self):
+        """Monitor switching starts on the monitor the cursor is on, so nothing jumps at launch."""
+        actions.look_at(None)
+        if not self.switching:
+            return
+        rects = actions.monitors()
+        points = {name: tuple(p) for name, p in self.cfg["monitor_gaze"].items() if name in rects}
+        if len(points) < 2:
+            self.error.emit("Monitor switching is off: fewer than two calibrated monitors are connected. "
+                            "Run Settings > Monitors > Calibrate monitors again.")
+            return
+        self.target = actions.monitor_at(*actions.mouse.position, rects)
+        self.selector = Selector(points, self.target if self.target in points else None)
+        actions.look_at(self.target)
+
+    def _look(self, t, face, frame):
+        result = face.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)))
+        height, width = frame.shape[:2]
+        seen = gaze([(p.x, p.y, p.z) for p in result.face_landmarks[0]], width, height) if result.face_landmarks else None
+        self.look.emit(seen)
+        if not (self.selector and self.enabled):
+            return
+        target = self.selector.update(t, seen)
+        if target and target != self.target:
+            self.target = target
+            try:
+                actions.look_at(target)
+            except Exception as e:  # a failed cursor move must not kill tracking
+                logging.exception("Monitor switch failed")
+                self.error.emit(f"Monitor switch failed: {e}")
 
     def _step(self, t, hands):
         if not self.enabled:
@@ -146,4 +205,6 @@ class Tracker(QThread):
         # the pinch number is shown so the pinch threshold slider can be tuned by eye
         seen = " | ".join(f"{side}: {hands[side]['gesture']} (pinch {hands[side]['feat']['pinch']:.2f})" if side in hands
                           else f"{side}: not in view" for side in self.engines)
+        if self.selector:
+            seen += f" | looking at: {(self.target or 'unknown').lstrip(chr(92) + '.')}"
         self.frame.emit(QImage(rgb.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy(), f"Tracking {state} | {seen}")
