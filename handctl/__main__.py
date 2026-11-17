@@ -21,10 +21,11 @@ from .wizard import MonitorCalibration, Wizard
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 HANDS_HELP = (
-    "Single: whichever hand is in view does everything.\n"
-    "Two: the pointer hand only moves the cursor, whatever shape it makes. The other hand does everything else: "
-    "pinch to click, fist to scroll, thumbs for volume, peace sign for play/pause. Clicking with the other hand "
-    "means the pointer never moves when you click."
+    "Auto: both hands are tracked. With one hand in view, it does everything. With both in view, the pointer hand "
+    "only moves the cursor, whatever shape it makes, and the other hand does everything else: pinch to click, fist "
+    "to scroll, thumbs for volume, peace sign for play/pause. Clicking with the other hand means the pointer never "
+    "moves when you click.\n"
+    "One: only one hand is ever tracked, so a second hand in view (say, typing) is ignored."
 )
 MONITORS_HELP = (
     "With two or more monitors, your hand controls the monitor you are looking at, and the cursor jumps to it when "
@@ -138,7 +139,7 @@ class Settings(QWidget):
         self.setWindowTitle("handctl settings")
 
         self.fields = {
-            "hand_mode": combo(["single", "two"]), "hand": combo(["Right", "Left"]),
+            "hand_mode": combo(["auto", "one"]), "hand": combo(["Right", "Left"]),
             "mirror": QCheckBox("Mirror camera image"),
             "min_cutoff": Slider(0.1, 5, 0.1, 1), "beta": Slider(0, 20, 0.5, 1),
             "pinch_threshold": Slider(0.05, 1, 0.01, 2),
@@ -199,7 +200,7 @@ class Settings(QWidget):
         wizard = QPushButton("Run setup wizard")
         wizard.clicked.connect(lambda: self.app.run_wizard())
         sub = QTabWidget()
-        sub.addTab(form(("Hand mode", f["hand_mode"]), ("Pointer hand (two-hand mode)", f["hand"]), f["mirror"], HANDS_HELP), "Hands")
+        sub.addTab(form(("Hand mode", f["hand_mode"]), ("Pointer hand (when both are in view)", f["hand"]), f["mirror"], HANDS_HELP), "Hands")
         sub.addTab(form(
             ("Steadiness (lower = steadier)", f["min_cutoff"]), ("Responsiveness (higher = less lag)", f["beta"]),
             ("Cursor area left", self.box[0]), ("top", self.box[1]), ("right", self.box[2]), ("bottom", self.box[3]),

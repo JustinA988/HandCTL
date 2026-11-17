@@ -72,9 +72,11 @@ How it avoids misfires and missed input:
 - A pinch only ends when the fingers clearly part, so drags don't drop. A hand that vanishes for under 0.3 s (a tracking hiccup) changes nothing.
 - Fist, thumbs and the signs must be held for a quarter second before they act, and each action has a cooldown.
 
-### Two-hand mode
+### Using both hands
 
-**Settings → Hands → Hand mode: two.** The *pointer hand* (right by default, swappable) only moves the cursor, whatever shape it makes. The *other hand* does everything else, so the pointer never moves when you click, and pinching with one hand while moving the other drags. Hands are told apart by where they are in the picture, not by MediaPipe's left/right guess, which flips when a hand turns sideways.
+Both hands are tracked automatically. With one hand in view, it does everything. With both in view, the *pointer hand* (right by default; change it under **Settings → Hands**) only moves the cursor, whatever shape it makes, and the *other hand* does everything else. That way the pointer never moves when you click, and pinching with one hand while moving the other drags. A hand that drops out of view for a moment doesn't change who does what, and a drag in progress is never cut off by the other hand appearing. Hands are told apart by where they are in the picture, not by MediaPipe's left/right guess, which flips when a hand turns sideways.
+
+If a second hand gets in the way (for example while typing), set **Settings → Hands → Hand mode** to **one**: only one hand is ever tracked.
 
 Remap anything under the **Gestures** tab: an action is a mouse action (`move`, `left`, `right`, `scroll`), a key combo (`<ctrl>+<alt>+t`, `<cmd>+d`, `<media_next>`, in [pynput's HotKey format](https://pynput.readthedocs.io/en/latest/keyboard.html#global-hotkeys)), or a shell command.
 
@@ -136,7 +138,7 @@ It freezes the app, runs the frozen copy's self-check, and writes `build\install
 
 v1 is an early release: the gestures and defaults are not final.
 
-**v2:** single-hand or two-hand mode, detection that works with a turned hand and any camera position, a Settings tab with sub-tabs and sliders, and a first-run setup wizard.
+**v2:** one or both hands, detection that works with a turned hand and any camera position, a Settings tab with sub-tabs and sliders, and a first-run setup wizard.
 
 **v3 (this branch):** a Windows installer, and monitor switching by head and eye direction.
 

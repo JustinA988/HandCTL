@@ -15,11 +15,11 @@ from PySide6.QtGui import QImage
 
 from . import actions
 from .gaze import Selector, gaze
-from .gestures import Classifier, Engine, anchor, assign
+from .gestures import GRACE, Classifier, Engine, anchor, assign
 
 MODEL = Path(__file__).parent / "models" / "gesture_recognizer.task"
 FACE_MODEL = MODEL.with_name("face_landmarker.task")
-ANY = "Hand"  # single-hand mode tracks whichever hand shows up
+ANY = "Hand"  # one-hand mode tracks whichever hand shows up
 LOOK_EVERY = 0.15  # seconds between face readings: plenty for choosing a monitor, and it keeps hand tracking fast
 
 
@@ -47,11 +47,10 @@ class Tracker(QThread):
         self.cfg = cfg
         self.enabled = enabled
         self.preview = False
-        if cfg["hand_mode"] == "two":  # the pointer hand moves the cursor, the other hand does everything else
-            other = "Left" if cfg["hand"] == "Right" else "Right"
-            self.engines = {cfg["hand"]: Engine(cfg, "pointer"), other: Engine(cfg, "action")}
-        else:
+        if cfg["hand_mode"] == "one":
             self.engines = {ANY: Engine(cfg)}
+        else:  # "auto": up to two hands; _roles decides each frame what each one does
+            self.engines = {"Left": Engine(cfg), "Right": Engine(cfg)}
         self.classifiers = {side: Classifier(cfg) for side in self.engines}
         self.last = {}  # side -> (time, position) it was last seen at
         self.switching = cfg["monitor_switch"] and len(cfg["monitor_gaze"]) >= 2
@@ -154,17 +153,29 @@ class Tracker(QThread):
             for engine in self.engines.values():
                 engine.reset()
             return
+        if ANY not in self.engines:
+            self._roles(t)
         for side, engine in self.engines.items():
             hand = hands.get(side)
             for event in engine.update(t, hand and hand["gesture"], hand and hand["pos"]):
                 self._execute(event)
+
+    def _roles(self, t):
+        """Both hands in view: the pointer hand only moves the cursor and the other hand does everything else.
+        One hand in view: it does everything. A hand missing for under GRACE still counts, so a tracking hiccup
+        doesn't flip roles, and a hand's role never changes while it holds the mouse button (a drag)."""
+        both = all(t - self.last[side][0] < GRACE for side in self.engines if side in self.last) and len(self.last) == 2
+        for side, engine in self.engines.items():
+            role = ("pointer" if side == self.cfg["hand"] else "action") if both else "single"
+            if role != engine.role and not engine.down:
+                engine.role = role
 
     def _release(self):
         if any(e.down for e in self.engines.values()):
             self._execute(("release",))
 
     def _read(self, result, t):
-        """{side: hand} for the hands in view. side is ANY in single-hand mode, else "Left" / "Right"."""
+        """{side: hand} for the hands in view. side is ANY in one-hand mode, else "Left" / "Right"."""
         found = []
         for i, points in enumerate(result.hand_landmarks):
             label = result.handedness[i][0].category_name
@@ -203,7 +214,8 @@ class Tracker(QThread):
             cv2.circle(rgb, (int(hand["pos"][0] * w), int(hand["pos"][1] * h)), 9, (255, 80, 80), 2)  # what the cursor follows
         state = "ON" if self.enabled else "OFF (hotkey to enable)"
         # the pinch number is shown so the pinch threshold slider can be tuned by eye
-        seen = " | ".join(f"{side}: {hands[side]['gesture']} (pinch {hands[side]['feat']['pinch']:.2f})" if side in hands
+        name = lambda side: side if self.engines[side].role == "single" else f"{side} ({self.engines[side].role})"
+        seen = " | ".join(f"{name(side)}: {hands[side]['gesture']} (pinch {hands[side]['feat']['pinch']:.2f})" if side in hands
                           else f"{side}: not in view" for side in self.engines)
         if self.selector:
             seen += f" | looking at: {(self.target or 'unknown').lstrip(chr(92) + '.')}"

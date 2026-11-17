@@ -32,25 +32,76 @@ def fake_result(*hands):
         gestures=[[ns(category_name=g, score=0.9)] for _, g, _, _ in hands])
 
 
-def test_single_hand_mode_follows_whichever_hand_shows_up(qapp):
+def test_one_hand_mode_follows_whichever_hand_shows_up(qapp):
     for label in ("Left", "Right"):  # MediaPipe's left/right label doesn't matter, so a flipped label can't lose the hand
-        t = Tracker(cfg())
+        t = Tracker(cfg(hand_mode="one"))
         got = t._read(fake_result((label, "None", 0.4, world(thumb="index"))), 0.0)
         assert list(got) == [ANY] and got[ANY]["gesture"] == "Pinch" and got[ANY]["pos"] == pytest.approx((0.4, 0.5))
 
 
-def test_two_hand_mode_assigns_roles_by_position(qapp):
-    t = Tracker(cfg(hand="Right", hand_mode="two"))
-    assert {k: e.role for k, e in t.engines.items()} == {"Right": "pointer", "Left": "action"}
+def test_auto_mode_tracks_both_hands_by_default(qapp):
+    t = Tracker(cfg())
+    assert config.DEFAULTS["hand_mode"] == "auto" and set(t.engines) == {"Left", "Right"}  # MediaPipe asked for 2 hands
     # both mislabelled "Right": the one on the left of the mirrored image is still the left hand
     got = t._read(fake_result(("Right", "None", 0.7, world()), ("Right", "None", 0.3, world(thumb="index"))), 0.0)
     assert {k: v["gesture"] for k, v in got.items()} == {"Left": "Pinch", "Right": "Hand"}
-    swapped = Tracker(cfg(hand="Left", hand_mode="two"))
-    assert {k: e.role for k, e in swapped.engines.items()} == {"Left": "pointer", "Right": "action"}
+
+
+def roles(t):
+    return {side: e.role for side, e in t.engines.items()}
+
+
+def frame(t, now, *hands):
+    """One camera frame through the tracker: read the hands, then step the engines (mouse output is stubbed)."""
+    t._step(now, t._read(fake_result(*hands), now))
+
+
+@pytest.fixture
+def quiet(monkeypatch):
+    from handctl import actions
+    events = []
+    monkeypatch.setattr(actions, "execute", lambda event, cfg: events.append(event))
+    return events
+
+
+def test_one_hand_in_view_does_everything_two_hands_split_the_work(qapp, quiet):
+    t = Tracker(cfg(hand="Right"))
+    right, left = ("Right", "None", 0.7, world()), ("Left", "None", 0.3, world())
+    frame(t, 0.0, right)
+    assert roles(t)["Right"] == "single"
+    frame(t, 0.1, right, left)
+    assert roles(t) == {"Right": "pointer", "Left": "action"}
+    frame(t, 0.2, right)  # left hand drops out for one frame: a tracking hiccup, roles hold
+    assert roles(t) == {"Right": "pointer", "Left": "action"}
+    for now in (0.6, 0.7):
+        frame(t, now, right)  # left hand really gone: the right hand does everything again
+    assert roles(t)["Right"] == "single"
+    for now in (1.0, 1.1):
+        frame(t, now, left)  # only the left hand: it does everything, clicks included
+    assert roles(t)["Left"] == "single"
+    swapped = Tracker(cfg(hand="Left"))
+    frame(swapped, 0.0, right, left)
+    assert roles(swapped) == {"Left": "pointer", "Right": "action"}
+
+
+def test_a_drag_is_not_cut_off_when_the_second_hand_appears(qapp, quiet):
+    t = Tracker(cfg(hand="Right"))
+    pinching, open_left = ("Right", "None", 0.7, world(thumb="index")), ("Left", "None", 0.3, world())
+    for i in range(10):
+        frame(t, i * 0.033, pinching)
+    assert t.engines["Right"].down and "press" in [e[0] for e in quiet]
+    for i in range(10, 20):
+        frame(t, i * 0.033, pinching, open_left)
+    assert t.engines["Right"].down and t.engines["Right"].role == "single"  # still dragging; role waits
+    assert "release" not in [e[0] for e in quiet]
+    for i in range(20, 30):
+        frame(t, i * 0.033, ("Right", "None", 0.7, world()), open_left)  # fingers part: drag ends, then roles split
+    assert "release" in [e[0] for e in quiet] and roles(t) == {"Right": "pointer", "Left": "action"}
 
 
 def test_no_hand_in_view(qapp):
     assert Tracker(cfg())._read(fake_result(), 0.0) == {}
+    assert Tracker(cfg(hand_mode="one"))._read(fake_result(), 0.0) == {}
 
 
 # --- wizard: calibration math ------------------------------------------------------------------------------------
@@ -69,9 +120,10 @@ def test_box_from_two_corners():
 
 def test_role_hand_picks_the_right_hand_for_each_job():
     hands = {"Left": "L", "Right": "R"}
-    two = cfg(hand_mode="two", hand="Right")
-    assert wizard.role_hand(hands, two, "pointer") == "R" and wizard.role_hand(hands, two, "action") == "L"
-    assert wizard.role_hand({ANY: "H"}, cfg(), "pointer") == wizard.role_hand({ANY: "H"}, cfg(), "action") == "H"
+    assert wizard.role_hand(hands, cfg(hand="Right"), "pointer") == "R" and wizard.role_hand(hands, cfg(hand="Right"), "action") == "L"
+    assert wizard.role_hand({"Left": "L"}, cfg(hand="Right"), "action") == wizard.role_hand({"Left": "L"}, cfg(), "pointer") == "L"
+    one = cfg(hand_mode="one")
+    assert wizard.role_hand({ANY: "H"}, one, "pointer") == wizard.role_hand({ANY: "H"}, one, "action") == "H"
     assert wizard.role_hand({}, cfg(), "pointer") is None
 
 

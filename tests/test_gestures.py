@@ -239,3 +239,14 @@ def test_older_settings_keep_camera_but_get_new_gesture_mappings(tmp_path):
     assert loaded["camera"] == 1 and loaded["min_cutoff"] == 0.5 and "cursor_mode" not in loaded
     assert loaded["mappings"] == config.DEFAULTS["mappings"] and loaded["version"] == 3
     assert loaded["wizard_done"] is False  # the wizard is offered again, because it now calibrates pinch
+
+
+def test_old_hand_modes_become_auto_and_keep_everything_else(tmp_path):
+    p = tmp_path / "config.json"
+    for old in ("single", "two"):
+        p.write_text(json.dumps({"version": 3, "hand_mode": old, "camera": 1, "wizard_done": True, "pinch_threshold": 0.22}))
+        loaded = config.load(p)
+        assert loaded["hand_mode"] == "auto" and loaded["camera"] == 1 and loaded["wizard_done"] is True
+        assert loaded["pinch_threshold"] == 0.22 and loaded["mappings"] == config.DEFAULTS["mappings"]
+    p.write_text(json.dumps({"version": 3, "hand_mode": "one", "camera": 1}))
+    assert config.load(p)["hand_mode"] == "one"  # a real choice is kept

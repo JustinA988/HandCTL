@@ -16,8 +16,8 @@ MOUSE_VALUES = ["move", "left", "right", "scroll"]
 DEFAULTS = {
     "version": 3,  # bump when gesture names change, so old mappings get reset instead of silently doing nothing
     "camera": 0,
-    "hand": "Right",  # two-hand mode only: the pointer hand (the other hand does the actions)
-    "hand_mode": "single",  # "single" follows whichever hand is in view; "two" splits pointing and actions
+    "hand": "Right",  # with both hands in view, this one moves the cursor and the other does the actions
+    "hand_mode": "auto",  # "auto": one hand in view does everything, two split the work; "one": only ever one hand
     "wizard_done": False,  # the first-run setup wizard opens until this is true
     "mirror": True,
     "toggle_hotkey": "<ctrl>+<alt>+g",
@@ -63,6 +63,9 @@ def load(path=PATH):
         data.pop("mappings", None)  # old gesture names no longer exist; other settings carry over
         data.pop("wizard_done", None)  # what the wizard calibrates may have changed, so offer it once more
         data["version"] = DEFAULTS["version"]
+    if data.get("hand_mode") in ("single", "two"):
+        # older values. "single" was the default, not a choice, and only ever tracked one hand; "auto" now tracks both
+        data["hand_mode"] = "auto"
     for key, value in data.items():
         default = DEFAULTS.get(key)
         if type(value) is type(default) or (type(default) is float and type(value) is int):
@@ -95,8 +98,8 @@ def validate(cfg):
     x0, y0, x1, y1 = cfg["box"]
     if not (0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1):
         errors.append("Cursor area: left/top must be smaller than right/bottom, all between 0 and 1.")
-    if cfg["hand_mode"] not in ("single", "two") or cfg["hand"] not in ("Right", "Left"):
-        errors.append("Hand mode must be single or two, and the hand Right or Left.")
+    if cfg["hand_mode"] not in ("auto", "one") or cfg["hand"] not in ("Right", "Left"):
+        errors.append("Hand mode must be auto or one, and the pointer hand Right or Left.")
     if not all(isinstance(p, list) and len(p) == 2 and all(type(v) in (int, float) for v in p) for p in cfg["monitor_gaze"].values()):
         errors.append("Monitor calibration data is damaged. Run the monitor calibration again.")
     if cfg["monitor_switch"] and len(cfg["monitor_gaze"]) < 2:

@@ -22,10 +22,10 @@ def test_settings_window_round_trips_defaults_and_two_hand_mode(fake_app):
     for name, m in config.DEFAULTS["mappings"].items():
         got = cfg["mappings"][name]
         assert (got["type"], got["value"]) == (m["type"], m["value"]), name
-    s.fields["hand_mode"].setCurrentText("two")
+    s.fields["hand_mode"].setCurrentText("one")
     s.fields["hand"].setCurrentText("Left")
     cfg = s.read()
-    assert (cfg["hand_mode"], cfg["hand"]) == ("two", "Left") and config.validate(cfg) == []
+    assert (cfg["hand_mode"], cfg["hand"]) == ("one", "Left") and config.validate(cfg) == []
 
 
 def test_save_applies_and_persists(fake_app, monkeypatch):

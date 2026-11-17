@@ -75,7 +75,8 @@ Dependencies: `mediapipe`, `opencv-python`, `PySide6`, `pynput`. Nothing else.
 ## Roadmap
 
 ### v2 (built on branch `v2/gestures`)
-- **Hand modes:** single-hand mode follows whichever hand is in view. Two-hand mode splits roles: the pointer hand only moves the cursor, the other hand does everything else (clicks included). A setting swaps which hand is the pointer. Hands are told apart by position in the frame (`assign` in `gestures.py`), falling back to MediaPipe's left/right label only when there is nothing else to go on.
+- **Hand modes:** "auto" (default, since 3.0.1) always asks MediaPipe for two hands. One hand in view does everything; with both in view the pointer hand only moves the cursor and the other hand does everything else (clicks included). Roles are re-decided every frame (`Tracker._roles`), with a 0.3 s grace so a tracking hiccup doesn't flip them, and never change while a hand holds the mouse button. A setting swaps which hand is the pointer. "one" tracks a single hand only. Hands are told apart by position in the frame (`assign` in `gestures.py`), falling back to MediaPipe's left/right label only when there is nothing else to go on. Before 3.0.1 the default "single" mode asked MediaPipe for one hand, so a second hand was never seen; saved "single"/"two" settings now load as "auto".
+- **Known limit:** MediaPipe's trained-pose scores depend on image orientation (one sample peace sign scores 0.68-0.77 unmirrored, 0.51-0.53 mirrored), so poses near the 0.6 cutoff may not always fire. Lower `POSE_SCORE` only with real-hand data, since that also raises accidental triggers.
 - **Settings:** a Settings tab with sub-tabs (Hands, Cursor, Gesture tuning, General), using sliders for tuning values.
 - **First-run setup wizard** (`wizard.py`): camera, cursor area (hold the hand at two screen corners), pinch calibration, and a live check of each gesture. Tracking is off while it runs.
 

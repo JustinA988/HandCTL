@@ -43,8 +43,9 @@ def box_from(top_left, bottom_right, min_span=0.15):
 
 
 def role_hand(hands, cfg, role):
-    """The hand that moves the cursor ("pointer") or clicks ("action"); the same hand in single-hand mode."""
-    if cfg["hand_mode"] == "single":
+    """The hand that moves the cursor ("pointer") or clicks ("action") when both are in view; with one hand in view
+    (or in one-hand mode) that hand does both jobs."""
+    if cfg["hand_mode"] == "one" or len(hands) < 2:
         return next(iter(hands.values()), None)
     other = "Left" if cfg["hand"] == "Right" else "Right"
     return hands.get(cfg["hand"] if role == "pointer" else other)
