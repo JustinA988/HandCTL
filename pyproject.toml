@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "handctl"
+version = "0.1.0"
+description = "Control your PC with hand gestures from a webcam."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "mediapipe>=1.2.3",
+    "opencv-python>=5.0",
+    "PySide6-Essentials>=6.12",  # not "PySide6": that pulls in WebEngine (~130 MB) which this app doesn't use
+    "pynput>=1.8",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.gui-scripts]
+handctl = "handctl.__main__:main"
+
+[tool.setuptools]
+packages = ["handctl", "handctl.models"]
+
+[tool.setuptools.package-data]
+"handctl.models" = ["*.task"]
