@@ -106,9 +106,19 @@ Not yet verified on real hands: the 0.6 curl and pose-confidence limits, the 0.3
 
 Ergonomics notes that still apply: an arm held out at shoulder height is the most tiring mid-air posture ([Consumed Endurance, CHI 2014](https://hci.cs.umanitoba.ca/publications/details/consumed-endurance-a-metric-to-quantify-arm-fatigue-of-mid-air-interactions)), so rest the elbow ([elbow-anchored input](https://hci.cs.umanitoba.ca/publications/details/elbow-anchored-interaction-designing-restful-mid-air-input)); webcam air pointing reaches under 75% of mouse throughput, partly from click detection ([SFU](https://vvise.iat.sfu.ca/user/data/papers/inairpointing.pdf)).
 
-### v3
-- **Windows installer** (.msi / Inno Setup) with a Start Menu entry.
-- **Monitor switching** by head and eye direction, with a camera position setting (above/below monitor).
+### v3 (built on branch `v3/installer-monitors`)
+
+#### Monitor switching
+- **Gaze** (`gaze.py`): MediaPipe's face landmarker (478 points including irises) gives a line of sight in degrees. Yaw = head turn (depth difference between the outer eye corners) + eye rotation (iris offset across the eye opening, scaled by eye width over eyeball radius). Pitch = head tilt only, because eyelids make vertical iris position unreliable; stacked monitors may need eye pitch later. Landmark indices and sign conventions were checked against a real face photo.
+- **Calibration**: a window appears on each monitor in turn (placed through Windows in real pixels); the median gaze while looking at each one becomes its target. Monitors with too few readings (face not visible) or targets closer than 8 degrees are left out, and the user is told which and why. Needs two usable monitors.
+- **Choosing**: the nearest target wins, but a switch needs the new monitor to be clearly nearer (distance under 0.75x the current one) for 0.4 s, so glances and noise don't flip it. No face visible = stay put. Switching starts on the monitor the cursor is on, so nothing jumps at launch.
+- **Effect**: the hand's cursor area maps onto the looked-at monitor only, and on a switch the cursor moves to the same relative spot there. Switching off = the hand maps to the whole desktop, as before.
+- **Cost**: the face is read every 150 ms, only while switching is on or calibrating; hand tracking keeps its own frame rate.
+
+#### Installer
+- PyInstaller freezes the app (`installer/entry.py`), Inno Setup packages it (`installer/handctl.iss`); `installer/build.ps1` does both and refuses to package a frozen copy that fails `handctl --check`.
+- Per-user install without admin rights (an all-users install is offered), Start Menu entry, optional desktop shortcut and autostart. Setup and uninstall ask to close a running copy (it holds the `handctl-single-instance` mutex). Uninstall removes the autostart entry however it was set, and keeps `%APPDATA%\handctl`.
+- Python 3.15 note: PySide6 replaces `builtins.__import__`, after which 3.15's lazy imports never resolve across modules. A frozen build loads Qt first, so `handctl/__init__.py` turns lazy imports off and repairs `concurrent.futures` regardless of import order.
 
 ### v4
 - Recording custom poses in settings, optional second camera, voice commands, gesture profile import/export, wake-gesture / hold-to-act activation, macOS then Linux.

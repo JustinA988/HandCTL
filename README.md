@@ -1,8 +1,12 @@
 # handctl
 
-Control your Windows PC with one hand in front of a webcam: move and click the mouse, scroll, control media and switch desktops. Everything runs locally on the CPU. No network calls, no accounts.
+Control your Windows PC with your hands in front of a webcam: move and click the mouse, scroll and control media. With several monitors, the cursor follows you to the monitor you look at. Everything runs locally on the CPU. No network calls, no accounts.
 
-## Install (from source)
+## Install
+
+Run `handctl-setup-<version>.exe`, from the [Releases page](https://github.com/JustinA988/HandCTL/releases) once a release is published, or built yourself (see [Building the installer](#building-the-installer)). It installs for your user account only, with no admin rights needed, and adds a Start Menu entry. A desktop shortcut and starting with Windows are optional during setup. Uninstall from **Settings → Apps**; your settings in `%APPDATA%\handctl` are kept, so a reinstall remembers your calibration.
+
+## Install from source
 
 Requires Windows 10/11, Python 3.12+ and a webcam. Commands are for Windows PowerShell and run from the project folder (the one containing `pyproject.toml`).
 
@@ -11,10 +15,20 @@ python -m venv .venv
 .venv\Scripts\python -m pip install -e ".[dev]"
 ```
 
-Download MediaPipe's gesture model (Apache-2.0, ~8 MB) into `handctl/models/`:
+Download MediaPipe's hand and face models (Apache-2.0, ~8 MB and ~4 MB) into `handctl/models/`:
 
 ```powershell
-New-Item -ItemType Directory -Force handctl\models; Invoke-WebRequest https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/latest/gesture_recognizer.task -OutFile handctl\models\gesture_recognizer.task
+Invoke-WebRequest https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/latest/gesture_recognizer.task -OutFile handctl\models\gesture_recognizer.task
+```
+
+```powershell
+Invoke-WebRequest https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task -OutFile handctl\models\face_landmarker.task
+```
+
+Check that everything loads (no camera, mouse or keyboard involved; exit code 0 means OK):
+
+```powershell
+.venv\Scripts\python -m handctl --check; $LASTEXITCODE
 ```
 
 ## Run
@@ -86,6 +100,12 @@ Pick a camera from the **Camera** dropdown at the top of the Preview tab; it swi
 
 The wizard sets these for you; to adjust them by hand, use **Settings → Cursor**. The orange box on the **Preview** tab is the area that maps to your whole screen (all monitors); shrink it so you can reach every corner without stretching. If the cursor jitters when you hold still, lower **Steadiness**. If it lags behind fast moves, raise **Responsiveness**. The red circle on the preview is the point the cursor follows.
 
+## Monitor switching
+
+With two or more monitors, open **Settings → Monitors → Calibrate monitors**. A small window appears on each monitor in turn; look at it until it moves on. Afterwards your hand controls the monitor you are looking at, and the cursor jumps to the same spot on a monitor when you look across to it. Head turns and eye movement both count, and a quick glance doesn't trigger a switch: you have to keep looking for about half a second.
+
+The camera has to see your face while you look at each monitor. A monitor you can only see by turning away from the camera is left out, and the calibration tells you so. Calibrate again after moving the camera or your monitors. Turn switching off with the checkbox on the same tab.
+
 Settings are stored in `%APPDATA%\handctl\config.json`. If that file is unreadable it is moved to `config.json.bak` and defaults are used.
 
 ## Tests
@@ -94,13 +114,31 @@ Settings are stored in `%APPDATA%\handctl\config.json`. If that file is unreadab
 .venv\Scripts\python -m pytest
 ```
 
+## Building the installer
+
+Needs PyInstaller in the venv and Inno Setup 6:
+
+```powershell
+.venv\Scripts\python -m pip install pyinstaller
+```
+
+```powershell
+winget install JRSoftware.InnoSetup
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File installer\build.ps1
+```
+
+It freezes the app, runs the frozen copy's self-check, and writes `build\installer\handctl-setup-<version>.exe`. The version comes from `pyproject.toml`.
+
 ## Roadmap
 
 v1 is an early release: the gestures and defaults are not final.
 
-**v2 (this branch):** single-hand or two-hand mode, detection that works with a turned hand and any camera position, a Settings tab with sub-tabs and sliders, and a first-run setup wizard.
+**v2:** single-hand or two-hand mode, detection that works with a turned hand and any camera position, a Settings tab with sub-tabs and sliders, and a first-run setup wizard.
 
-**v3:** a Windows installer, and monitor switching by head and eye direction.
+**v3 (this branch):** a Windows installer, and monitor switching by head and eye direction.
 
 **v4:** recording custom poses, an optional second camera, voice commands, gesture profile import/export, macOS then Linux.
 
@@ -108,4 +146,4 @@ Full details are in [SPEC.md](SPEC.md).
 
 ## License
 
-MIT. The MediaPipe model is Apache-2.0 (Google).
+MIT. The MediaPipe models are Apache-2.0 (Google).
