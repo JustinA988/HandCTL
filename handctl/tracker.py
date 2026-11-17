@@ -289,6 +289,8 @@ class Tracker(QThread):
         # the pinch number is shown so the pinch threshold slider can be tuned by eye
         seen = " | ".join(f"{side}: {hands[side]['gesture']} (pinch {hands[side]['feat']['pinch']:.2f})" if side in hands
                           else f"{side}: not in view" for side in self.engines)
+        if self.cfg["control_mode"] == "actions":
+            seen += " | ACTION-ONLY (cursor off)"
         if self.mode:
             seen += f" | MODE: {self.mode}"
         if self.selector:

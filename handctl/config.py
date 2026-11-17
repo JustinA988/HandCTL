@@ -14,7 +14,9 @@ MODE_POSES = ["Closed_Fist", "Thumb_Up", "Thumb_Down", "Victory", "ILoveYou"]  #
 MODES = ["Edit", "Media", "Windows", "Browser", "System"]
 SLOTS = [p for p in POSE_NAMES if p != "Hand"]  # what the main hand can do inside a mode
 # every mapping name: a plain pose is a "core" action that works whenever no mode overrides it; "Mode/Pose" is a mode's version
+ACTION_PREFIX = "A:"  # action-only mode keeps its own mappings under this prefix, so switching modes never loses either set
 GESTURES = POSE_NAMES + [f"{mode}/{pose}" for mode in MODES for pose in SLOTS]
+ACTION_GESTURES = [ACTION_PREFIX + name for name in GESTURES]
 ACTION_TYPES = ["none", "mouse", "keys", "shell"]
 MOUSE_VALUES = ["move", "left", "right", "middle", "scroll", "hscroll", "zoom"]
 
@@ -69,10 +71,32 @@ MAPPINGS = {
     "System/Pinch_Middle": _keys("<cmd>+l", 2500), "System/Pinch_Pinky": _keys("<ctrl>+<shift>+<esc>", 1500),
 }
 
+# action-only mode: the hand never moves the cursor. One hand gets the quick, common actions on the poses that were reliable
+# in testing; the two-hand modes carry over unchanged for the less common ones.
+_ACTION_CORE = {
+    "Hand": {"type": "none", "value": ""},  # relaxed hand: nothing happens
+    "Pinch": _keys("<cmd>+<shift>+s", 1500),  # screenshot
+    "Closed_Fist": _keys("<cmd>+h", 1500),  # voice typing
+    "Thumb_Up": _keys("<ctrl>+<tab>", 500),  # next tab
+    "Thumb_Down": _keys("<ctrl>+<shift>+<tab>", 500),  # previous tab
+    "Victory": _keys("<media_play_pause>", 800),
+    "ILoveYou": _keys("<alt>+<tab>", 800),  # switch app
+}
+for _pose in POSE_NAMES:
+    MAPPINGS[ACTION_PREFIX + _pose] = _ACTION_CORE.get(_pose, {"type": "none", "value": ""})
+for _name, _m in list(MAPPINGS.items()):
+    if "/" in _name and not _name.startswith(ACTION_PREFIX):
+        MAPPINGS[ACTION_PREFIX + _name] = dict(_m)
+# thumbs are tabs in action-only core, so Media mode needs its own volume
+MAPPINGS[ACTION_PREFIX + "Media/Thumb_Up"] = _keys("<media_volume_up>", 150, repeat=True)
+MAPPINGS[ACTION_PREFIX + "Media/Thumb_Down"] = _keys("<media_volume_down>", 150, repeat=True)
+
 DEFAULTS = {
     "version": 4,  # bump when mapping names change; load() then adds the new defaults (and resets very old settings)
     "camera": 0,
     "hand": "Right",  # with both hands in view, this one moves the cursor and the other one picks the mode
+    "control_mode": "cursor",  # "cursor": the hand moves the cursor; "actions": it never does, and only triggers actions
+    "action_hold_ms": 250,  # action-only mode: how long any pose must be held, so a stray one can't fire a screenshot
     "hand_mode": "auto",  # "auto": one hand in view does everything, two split the work; "one": only ever one hand
     "wizard_done": False,  # the first-run setup wizard opens until this is true
     "mirror": True,
@@ -165,6 +189,8 @@ def validate(cfg):
     x0, y0, x1, y1 = cfg["box"]
     if not (0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1):
         errors.append("Cursor area: left/top must be smaller than right/bottom, all between 0 and 1.")
+    if cfg["control_mode"] not in ("cursor", "actions"):
+        errors.append("Control mode must be cursor or actions.")
     if cfg["hand_mode"] not in ("auto", "one") or cfg["hand"] not in ("Right", "Left"):
         errors.append("Hand mode must be auto or one, and the pointer hand Right or Left.")
     errors += _mode_errors(cfg["modes"])

@@ -266,6 +266,59 @@ def test_mode_actions_replace_core_ones_and_core_ones_remain_elsewhere():
     assert "press" in kinds(events)
 
 
+def actions_cfg(**overrides):
+    return cfg(control_mode="actions", **overrides)
+
+
+def runs(events):
+    return [ev[1]["value"] for ev in events if ev[0] == "run"]
+
+
+def test_action_only_mode_never_moves_or_clicks_and_needs_a_longer_hold():
+    e = Engine(actions_cfg())
+    assert config.DEFAULTS["action_hold_ms"] == 250
+    assert run(e, hold("Hand", 0, 1.0, (0.2, 0.2)) + hold("Hand", 1.0, 2.0, (0.8, 0.8))) == []  # a hand waving about does nothing
+    assert run(e, hold("Pinch", 2.0, 2.2)) == []  # a pinch shorter than the hold is ignored: no stray screenshot
+    assert runs(run(e, hold("Pinch", 2.2, 2.6))) == ["<cmd>+<shift>+s"]
+    events = run(e, hold("Hand", 2.6, 3.0) + hold("Pinch", 3.0, 3.6) + hold("Hand", 3.6, 4.0))
+    assert set(kinds(events)) <= {"run"} and "press" not in kinds(events)  # a click would be a press
+
+
+def test_action_only_one_hand_quick_actions():
+    expected = {"Pinch": "<cmd>+<shift>+s", "Closed_Fist": "<cmd>+h", "Thumb_Up": "<ctrl>+<tab>",
+                "Thumb_Down": "<ctrl>+<shift>+<tab>", "Victory": "<media_play_pause>", "ILoveYou": "<alt>+<tab>"}
+    for pose, combo in expected.items():
+        e = Engine(actions_cfg())
+        got = runs(run(e, hold("Hand", 0, 0.3) + hold(pose, 0.3, 0.8)))
+        assert got == [combo], (pose, got)
+    # even a fist, which scrolls in cursor mode, doesn't scroll here
+    e = Engine(actions_cfg())
+    events = run(e, [(i * 0.033, "Closed_Fist", (0.5, 0.8 - i * 0.01)) for i in range(40)])
+    assert "scroll" not in kinds(events) and runs(events) == ["<cmd>+h"]
+
+
+def test_action_only_modes_carry_the_less_common_actions():
+    e = Engine(actions_cfg())
+    e.mode = "Edit"
+    assert runs(run(e, hold("Pinch", 0, 0.5))) == ["<ctrl>+c"]
+    e = Engine(actions_cfg())
+    e.mode = "Media"
+    events = run(e, hold("Thumb_Up", 0, 1.2))  # thumbs are tabs on their own, but volume inside Media mode
+    assert set(runs(events)) == {"<media_volume_up>"} and len(runs(events)) >= 3
+
+
+def test_action_only_mode_never_falls_back_to_a_cursor_mapping():
+    c = actions_cfg()
+    c["mappings"] = {**c["mappings"], "A:Edit/Victory": {"type": "none", "value": ""}}
+    e = Engine(c)
+    e.mode = "Edit"
+    events = run(e, hold("Victory", 0, 0.5))
+    assert runs(events) == ["<media_play_pause>"]  # the action-only peace sign, not cursor mode's right click
+    assert not any(ev[0] == "run" and ev[1]["type"] == "mouse" for ev in events)
+    plain = Engine(cfg())  # and cursor mode doesn't see the action-only mappings
+    assert runs(run(plain, hold("Hand", 0, 0.2) + hold("Victory", 0.2, 0.5))) == ["right"]
+
+
 def test_a_mode_change_mid_pose_does_not_switch_the_action():
     e = Engine(cfg())
     assert "press" in kinds(run(e, hold("Hand", 0, 0.2) + hold("Pinch", 0.2, 0.5)))  # a click has started
@@ -337,7 +390,7 @@ def test_default_smoothing_balances_steadiness_and_lag():
 
 def test_defaults_are_valid_and_bad_values_rejected():
     assert config.validate(cfg()) == []
-    assert set(config.DEFAULTS["mappings"]) <= set(config.GESTURES)  # slots a mode leaves empty simply fall back to the core action
+    assert set(config.DEFAULTS["mappings"]) <= set(config.GESTURES + config.ACTION_GESTURES)  # empty slots fall back to the core action
     assert len(config.GESTURES) == 10 + 5 * 9 and all(f"{m}/Pinch" in config.DEFAULTS["mappings"] for m in config.MODES)
     c = cfg(hand_mode="three")
     c["box"] = [0.5, 0, 0.5, 1]
@@ -395,6 +448,19 @@ def test_mode_poses_are_validated_and_a_damaged_table_costs_nothing_else(tmp_pat
     p.write_text(json.dumps({"version": 4, "camera": 1, "modes": {"Edit": "Thumb_Up"}}))  # duplicates Media's pose
     loaded = config.load(p)
     assert loaded["modes"] == config.DEFAULTS["modes"] and loaded["camera"] == 1
+
+
+def test_control_mode_is_validated_and_action_only_mappings_never_aim_the_cursor(tmp_path):
+    assert any("Control mode" in e for e in config.validate(cfg(control_mode="mouse")))
+    aiming = {"move", "left", "right", "middle", "scroll", "hscroll"}
+    assert not [n for n, m in config.DEFAULTS["mappings"].items()
+                if n.startswith(config.ACTION_PREFIX) and m["type"] == "mouse" and m["value"] in aiming]
+    p = tmp_path / "config.json"  # a settings file from before action-only mode gains it without changing anything else
+    mine = {"type": "keys", "value": "<ctrl>+<alt>+t", "cooldown_ms": 700}
+    p.write_text(json.dumps({"version": 4, "camera": 1, "wizard_done": True, "mappings": {"Victory": mine}}))
+    loaded = config.load(p)
+    assert loaded["control_mode"] == "cursor" and loaded["mappings"]["Victory"] == mine and loaded["camera"] == 1
+    assert loaded["mappings"]["A:Pinch"] == config.DEFAULTS["mappings"]["A:Pinch"]
 
 
 def test_every_default_key_combo_is_valid_and_dangerous_ones_have_cooldowns():

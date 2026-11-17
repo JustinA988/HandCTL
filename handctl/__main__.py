@@ -20,6 +20,11 @@ from .tracker import Tracker, list_cameras
 from .wizard import MonitorCalibration, Wizard
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+CONTROL_HELP = (
+    "Cursor: your hand moves the cursor and clicks. Actions: it never does; gestures only trigger actions (screenshot, "
+    "voice typing, change tab, ...), with the common ones on one hand and the rest on two. You can also switch from the "
+    "tray menu. The Gestures tab has a separate set of gestures for each, so editing one never changes the other."
+)
 HANDS_HELP = (
     "Auto: both hands are tracked. With one hand in view, it does everything (the core gestures). With both in view, "
     "the main hand keeps moving the cursor and doing the core gestures, and the other hand picks a mode by holding a "
@@ -146,6 +151,7 @@ class Settings(QWidget):
         self.setWindowTitle("handctl settings")
 
         self.fields = {
+            "control_mode": combo(["cursor", "actions"]), "action_hold_ms": Slider(100, 1000, 10, 0),
             "hand_mode": combo(["auto", "one"]), "hand": combo(["Right", "Left"]),
             "mirror": QCheckBox("Mirror camera image"),
             "min_cutoff": Slider(0.1, 5, 0.1, 1), "beta": Slider(0, 20, 0.5, 1),
@@ -181,18 +187,21 @@ class Settings(QWidget):
 
         # Gestures tab: what each gesture does, one table for the core gestures and one per mode
         self.rows = []
-        groups = QTabWidget()
-        groups.addTab(self.table_for("Core", config.POSE_NAMES), "Core")
-        for mode in config.MODES:
-            groups.addTab(self.table_for(mode, [f"{mode}/{pose}" for pose in config.SLOTS]), mode)
+        self.sets = [self.groups_for(""), self.groups_for(config.ACTION_PREFIX)]  # cursor-mode gestures, action-only gestures
+        self.set_picker = combo(["Cursor mode gestures", "Action-only mode gestures"])
+        self.set_picker.currentIndexChanged.connect(self.show_set)
         reset = QPushButton("Reset gestures to defaults")
         reset.clicked.connect(lambda: self.put_mappings(config.DEFAULTS["mappings"]))
         gestures_tab = QWidget()
         g = QVBoxLayout(gestures_tab)
-        g.addWidget(QLabel(GESTURES_HELP))
-        g.itemAt(0).widget().setWordWrap(True)
-        g.addWidget(groups)
+        help_label = QLabel(GESTURES_HELP)
+        help_label.setWordWrap(True)
+        g.addWidget(help_label)
+        g.addWidget(self.set_picker)
+        for groups in self.sets:
+            g.addWidget(groups)
         g.addWidget(reset)
+        self.show_set(0)
 
         # Settings tab with sub-tabs
         wizard = QPushButton("Run setup wizard")
@@ -200,7 +209,8 @@ class Settings(QWidget):
         sub = QTabWidget()
         self.mode_poses = {mode: combo(config.MODE_POSES) for mode in config.MODES}
         sub.addTab(form(
-            ("Hand mode", f["hand_mode"]), ("Main hand (moves the cursor)", f["hand"]), f["mirror"], HANDS_HELP,
+            ("Control mode", f["control_mode"]), CONTROL_HELP,
+            ("Hand mode", f["hand_mode"]), ("Main hand", f["hand"]), f["mirror"], HANDS_HELP,
             *[(f"{mode} mode: other hand makes", box) for mode, box in self.mode_poses.items()],
         ), "Hands")
         sub.addTab(form(
@@ -209,6 +219,7 @@ class Settings(QWidget):
         ), "Cursor")
         sub.addTab(form(
             ("Pinch threshold", f["pinch_threshold"]), ("Pose hold before acting (ms)", f["hold_ms"]),
+            ("Hold in action-only mode (ms)", f["action_hold_ms"]),
             ("Pinch hold before drag (ms)", f["drag_ms"]), ("Scroll speed", f["scroll_speed"]),
             "The Preview tab shows a live pinch number: it is small when thumb and finger touch. Set the pinch threshold "
             "between your touching and open values: raise it if pinches don't click, lower it if clicks fire by accident.",
@@ -230,13 +241,25 @@ class Settings(QWidget):
         layout.addWidget(save)
         self.load(app.cfg)
 
-    def table_for(self, group, names):
+    def groups_for(self, prefix):
+        """Tabs of tables: the core gestures, then one per mode. prefix picks the cursor-mode or action-only set."""
+        groups = QTabWidget()
+        groups.addTab(self.table_for([prefix + pose for pose in config.POSE_NAMES]), "Core")
+        for mode in config.MODES:
+            groups.addTab(self.table_for([f"{prefix}{mode}/{pose}" for pose in config.SLOTS]), mode)
+        return groups
+
+    def show_set(self, index):
+        for i, groups in enumerate(self.sets):
+            groups.setVisible(i == index)
+
+    def table_for(self, names):
         """A table with one row per mapping name; its widgets are collected in self.rows."""
         table = QTableWidget(len(names), 5)
         table.setHorizontalHeaderLabels(["Gesture", "Action", "Value", "Cooldown ms", "Repeat while held"])
         for i, name in enumerate(names):
             cells = [combo(config.ACTION_TYPES), QLineEdit(), spin(0, 10000), QCheckBox()]
-            table.setCellWidget(i, 0, QLabel(name.split("/")[-1].replace("_", " ")))
+            table.setCellWidget(i, 0, QLabel(name.removeprefix(config.ACTION_PREFIX).split("/")[-1].replace("_", " ")))
             for col, w in enumerate(cells, 1):
                 table.setCellWidget(i, col, w)
             self.rows.append((name, *cells))
@@ -268,6 +291,7 @@ class Settings(QWidget):
             w.setValue(v)
         for mode, box in self.mode_poses.items():
             box.setCurrentText(cfg["modes"][mode])
+        self.set_picker.setCurrentIndex(1 if cfg["control_mode"] == "actions" else 0)  # show the set that is in use
         calibrated = len(cfg["monitor_gaze"])
         self.monitor_note.setText(f"Calibrated for {calibrated} monitors." if calibrated >= 2 else "Not calibrated yet.")
         self.put_mappings(cfg["mappings"])
@@ -329,6 +353,9 @@ class App:
         self.toggle_action = menu.addAction("Tracking enabled")
         self.toggle_action.setCheckable(True)
         self.toggle_action.triggered.connect(lambda: self.tracker.toggle())
+        self.action_only = menu.addAction("Action-only mode (cursor off)")
+        self.action_only.setCheckable(True)
+        self.action_only.triggered.connect(lambda checked: self.set_control_mode("actions" if checked else "cursor"))
         menu.addAction("Settings", self.show_settings)
         menu.addAction("Quit", qapp.quit)
         self.tray.setContextMenu(menu)
@@ -342,6 +369,12 @@ class App:
         self.settings.show()
         self.settings.raise_()
         self.settings.activateWindow()
+
+    def set_control_mode(self, mode):
+        cfg = {**self.cfg, "control_mode": mode}
+        config.save(cfg)
+        self.apply(cfg)
+        self.settings.load(cfg)
 
     def run_wizard(self):
         self.show_settings()
@@ -378,6 +411,7 @@ class App:
         self.tracker.error.connect(lambda msg: self.tray.showMessage("handctl", msg, QSystemTrayIcon.MessageIcon.Warning))
         self.tracker.toggled.connect(self.toggle_action.setChecked)
         self.toggle_action.setChecked(not self.calibrating)
+        self.action_only.setChecked(cfg["control_mode"] == "actions")
         self.tracker.start()
         self.hotkey = keyboard.GlobalHotKeys({cfg["toggle_hotkey"]: self.tracker.toggle})
         self.hotkey.start()

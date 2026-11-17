@@ -137,5 +137,9 @@ Measured on one user's camera (guided recording of 1,839 frames, replayed throug
 - **Hands cut off by the picture edge** (3 or more landmarks outside it; up to 13 for a hand resting at the bottom edge) are ignored: they caused stray clicks. Hands being used had 0-1.
 - Not verified on other people or cameras. Thresholds (`CURLED`, `FIST`, the 0.45 face ratio, `POSE_SCORE`) come from this one recording. The wizard's pinch step measures the pinch threshold per user.
 
+#### Action-only mode (3.2)
+
+`control_mode: "actions"` (Settings > Hands, or the tray menu). The hand never aims: `Engine._pick` looks only at `A:`-prefixed mappings (`A:Pinch`, `A:Edit/Pinch`, ...), which are kept next to the cursor mappings in the same dictionary, so settings files from earlier versions simply gain them and switching modes loses nothing. No fallback to a cursor mapping. Every pose waits `action_hold_ms` (250) instead of the quick 60 ms pinch and 100 ms pose holds, because with nothing being aimed there is no reason to hurry and a stray pinch would fire a screenshot. One hand, on the poses that tested reliable: pinch = screenshot, fist = voice typing, thumbs up/down = next/previous tab, peace sign = play/pause, "I love you" = switch app. The two-hand modes are copied over (`A:Edit/...` etc.) with Media's thumbs set to volume. Verified by replaying the recorded session in this mode: no actions in the no-hands, open-hand, both-hands-open and near-face phases; one screenshot from the repeated pinches (cooldown 1.5 s), one voice-typing from the held fist, two copies in Edit mode. Not verified live.
+
 ### v4
 - Recording custom poses in settings, optional second camera, voice commands, gesture profile import/export, wake-gesture / hold-to-act activation, macOS then Linux.

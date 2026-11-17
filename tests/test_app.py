@@ -146,6 +146,18 @@ def test_a_hand_that_becomes_the_mode_hand_lets_go_of_a_drag(qapp, quiet):
     assert ("release",) in quiet and not t.engines["Left"].down
 
 
+def test_action_only_mode_through_the_tracker(qapp, quiet):
+    t = Tracker(cfg(control_mode="actions", hand="Right"))
+    now = frames(t, 0.0, 0.3, right())  # an open hand, moving or not, does nothing
+    assert quiet == []
+    now = frames(t, now, 0.5, right(thumb="index"))  # a pinch held long enough: a screenshot, not a click
+    assert combos(quiet) == ["<cmd>+<shift>+s"] and not {"press", "move", "scroll"} & {e[0] for e in quiet}
+    quiet.clear()
+    now = frames(t, now, 0.4, right(), left())
+    now = frames(t, now, 0.5, right(thumb="index"), left(curl="imrp"))  # the other hand's fist: Edit mode, so a pinch copies
+    assert t.mode == "Edit" and combos(quiet) == ["<ctrl>+c"] and not {"press", "move"} & {e[0] for e in quiet}
+
+
 def test_modes_reset_when_tracking_is_paused(qapp, quiet):
     t = Tracker(cfg(hand="Right"))
     frames(t, 0.0, 0.5, right(), left(curl="imrp"))

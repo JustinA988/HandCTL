@@ -178,7 +178,10 @@ class Engine:
         out = []
         if gesture != self.raw:
             self.raw, self.since = gesture, t
-        hold = SLOW.get(gesture) or (QUICK_HOLD if gesture in QUICK else self.cfg["hold_ms"] / 1000)
+        if self.cfg["control_mode"] == "actions":
+            hold = self.cfg["action_hold_ms"] / 1000  # nothing is being aimed, so there is no reason to be quick
+        else:
+            hold = SLOW.get(gesture) or (QUICK_HOLD if gesture in QUICK else self.cfg["hold_ms"] / 1000)
         if gesture != self.current and t - self.since >= hold:
             out += self._exit()
             self.current, self.entered = gesture, t
@@ -208,7 +211,8 @@ class Engine:
     def _pick(self, pose):
         """(name, mapping) for a pose: the current mode's version if it has one, else the plain one."""
         mappings = self.cfg["mappings"]
-        names = [f"{self.mode}/{pose}", pose] if self.mode else [pose]
+        prefix = "A:" if self.cfg["control_mode"] == "actions" else ""  # action-only mode never falls back to cursor mappings
+        names = [f"{prefix}{self.mode}/{pose}", prefix + pose] if self.mode else [prefix + pose]
         for name in names:
             act = mappings.get(name)
             if act and act["type"] != "none":

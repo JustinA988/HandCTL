@@ -31,7 +31,7 @@ def test_settings_window_round_trips_defaults_and_two_hand_mode(fake_app):
 def test_every_gesture_has_a_row_and_mode_poses_can_be_changed(fake_app):
     from handctl.__main__ import Settings
     s = Settings(fake_app)
-    assert [row[0] for row in s.rows] == config.POSE_NAMES + [f"{m}/{p}" for m in config.MODES for p in config.SLOTS]
+    assert [row[0] for row in s.rows] == config.GESTURES + config.ACTION_GESTURES  # a table set for each control mode
     s.mode_poses["Edit"].setCurrentText("ILoveYou")
     s.mode_poses["Browser"].setCurrentText("Closed_Fist")
     cfg = s.read()
@@ -42,6 +42,23 @@ def test_every_gesture_has_a_row_and_mode_poses_can_be_changed(fake_app):
     assert row[1].currentText() == "keys" and row[2].text() == "<ctrl>+c"
     row[2].setText("<ctrl>+<shift>+c")
     assert s.read()["mappings"]["Edit/Pinch"]["value"] == "<ctrl>+<shift>+c"
+
+
+def test_control_mode_switch_and_the_two_gesture_sets(fake_app):
+    from handctl.__main__ import Settings
+    s = Settings(fake_app)
+    assert s.set_picker.currentIndex() == 0 and not s.sets[0].isHidden() and s.sets[1].isHidden()  # cursor gestures shown
+    s.set_picker.setCurrentIndex(1)
+    assert s.sets[0].isHidden() and not s.sets[1].isHidden()
+    s.fields["control_mode"].setCurrentText("actions")
+    row = next(r for r in s.rows if r[0] == "A:Pinch")  # the action-only set is editable and independent of the cursor set
+    assert row[1].currentText() == "keys" and row[2].text() == "<cmd>+<shift>+s"
+    row[2].setText("<ctrl>+<shift>+s")
+    cfg = s.read()
+    assert cfg["control_mode"] == "actions" and cfg["mappings"]["A:Pinch"]["value"] == "<ctrl>+<shift>+s"
+    assert cfg["mappings"]["Pinch"]["value"] == "left" and config.validate(cfg) == []
+    s.load({**fake_app.cfg, "control_mode": "actions"})  # loading settings that use action-only mode shows that set
+    assert s.set_picker.currentIndex() == 1
 
 
 def test_save_applies_and_persists(fake_app, monkeypatch):

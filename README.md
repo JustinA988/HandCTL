@@ -111,9 +111,26 @@ Settings saved by an earlier version keep your camera, calibration and your own 
 
 **Shell commands are disabled by default.** Enable them under Settings → General only if you trust every command in your mappings.
 
+### Action-only mode
+
+For when you don't want the hand moving the cursor at all. Switch it in **Settings → Hands → Control mode: actions**, or from the tray icon's menu (**Action-only mode**). The hand never moves the cursor, clicks or scrolls; gestures only trigger actions. Because nothing is being aimed, every pose has to be held for a quarter of a second (a slider under Gesture tuning), so a stray fist or pinch can't fire an action, and nothing happens at all while you just wave a relaxed hand about.
+
+One hand does the common ones:
+
+| Gesture | Action |
+|---|---|
+| Pinch thumb + index | Screenshot |
+| Fist | Voice typing |
+| Thumbs up | Next tab |
+| Thumbs down | Previous tab |
+| Peace sign | Play/pause |
+| "I love you" sign | Switch app |
+
+The less common actions are on two hands, with the same five modes as cursor mode (the other hand holds a fist, thumbs up, peace sign, "I love you" or thumbs down) and the same main-hand gestures: copy, paste, undo, close tab, show desktop, lock screen and the rest. The one difference is thumbs inside Media mode, which are volume up and down, because thumbs are tab changes on their own here. The Gestures tab keeps a separate set of gestures for each control mode (pick which to edit at the top), so changing one never changes the other, and action-only mode never falls back to a cursor gesture.
+
 ## Settings window
 
-Three tabs: **Preview** (camera picker and live image), **Gestures** (what each gesture does: Core, then one table per mode) and **Settings**, with sub-tabs **Hands** (hand mode, main hand, each mode's pose), **Cursor**, **Gesture tuning** (sliders for the pinch threshold, hold times and scroll speed), **Monitors** and **General**. The Preview status line names the pose each hand is making, a live pinch number, and the mode that is active.
+Three tabs: **Preview** (camera picker and live image), **Gestures** (what each gesture does: Core, then one table per mode, for cursor mode or action-only mode) and **Settings**, with sub-tabs **Hands** (control mode, hand mode, main hand, each mode's pose), **Cursor**, **Gesture tuning** (sliders for the pinch threshold, hold times and scroll speed), **Monitors** and **General**. The Preview status line names the pose each hand is making, a live pinch number, and the mode that is active.
 
 ## If it doesn't pick up your hand
 
