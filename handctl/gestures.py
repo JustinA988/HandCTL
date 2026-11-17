@@ -2,21 +2,52 @@
 import math
 from collections import deque
 
-SWIPE_WINDOW = 0.3  # seconds
-SWIPE_DIST = 0.2  # fraction of frame width
+FLICK_WINDOW = 0.25  # seconds
+FLICK_DIST = 0.12  # fraction of frame width: a short wrist flick (with three fingers out), not a full arm swipe
+TRUSTED = ("Thumb_Up", "ILoveYou")  # MediaPipe's built-in poses that need no landmark checks
+POINTER_GESTURES = ("Point", "Closed_Fist")  # in two-hand mode the pointer hand only does these; the other hand does the rest
 
 
-def classify(canned, lm, threshold):
-    """Adds pinch poses on top of MediaPipe's gesture name. lm: 21 (x, y) landmarks."""
-    if canned == "Closed_Fist":
-        return canned  # the thumb rests near the curled fingers in a fist
+def _seg_dist(p, a, b):
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    t = max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy or 1e-9)))
+    return math.dist(p, (a[0] + t * dx, a[1] + t * dy))
+
+
+def tap_ratio(lm):
+    """Thumb tip to the side of the index finger, in hand sizes: small = thumb pressed against it."""
+    return min(_seg_dist(lm[4], lm[5], lm[6]), _seg_dist(lm[4], lm[6], lm[7])) / math.dist(lm[0], lm[9])
+
+
+def fingers(lm):
+    """Extended state of index, middle, ring, pinky: tip clearly farther from the wrist than its middle joint."""
+    return tuple(math.dist(lm[0], lm[tip]) > 1.1 * math.dist(lm[0], lm[pip]) for tip, pip in ((8, 6), (12, 10), (16, 14), (20, 18)))
+
+
+def classify(canned, lm, cfg):
+    """Maps MediaPipe's gesture name plus 21 (x, y) landmarks to one of config.GESTURES (or "None")."""
+    if canned in TRUSTED:
+        return canned
     size = math.dist(lm[0], lm[9])  # wrist to middle knuckle, so thresholds ignore distance to camera
-    if math.dist(lm[4], lm[8]) < threshold * size:
+    ext = list(fingers(lm))
+    # a finger pointing at the camera looks short in 2D; trust MediaPipe's own label for which fingers are out
+    if canned == "Pointing_Up":
+        ext[0] = True
+    elif canned == "Victory":
+        ext[0] = ext[1] = True
+    ext = tuple(ext)
+    if canned == "Closed_Fist":
+        return canned  # the thumb rests near the curled fingers in a fist, so this must win over pinch
+    if math.dist(lm[4], lm[8]) < cfg["pinch_threshold"] * size:
         return "Pinch"
-    # middle finger must not be curled, or a tucked thumb in Pointing_Up reads as a pinch
-    if math.dist(lm[4], lm[12]) < threshold * size and math.dist(lm[0], lm[12]) > size:
-        return "Pinch_Middle"
-    return canned
+    if not any(ext):
+        return "Closed_Fist"
+    tap = tap_ratio(lm) < cfg["tap_threshold"]  # thumb tip pressed onto the side of the index finger
+    for name, shape in (("Point", (True, False, False, False)), ("Two_Finger", (True, True, False, False)),
+                        ("Three_Finger", (True, True, True, False))):
+        if ext == shape:
+            return name + "_Tap" if tap else name
+    return "None"
 
 
 def _alpha(cutoff, dt):
@@ -45,27 +76,32 @@ class OneEuro:
 
 
 class Engine:
-    """update() returns events: ("move", x, y) with x, y in 0-1 of the screen,
-    ("press",), ("release",), ("scroll", steps), ("run", mapping)."""
+    """update() returns events: ("move", x, y) with x, y in 0-1 of the screen (absolute mode),
+    ("move_by", dx, dy) in screen fractions (relative mode), ("press",), ("release",), ("scroll", steps),
+    ("run", mapping)."""
 
-    def __init__(self, cfg):
-        self.cfg = cfg
+    def __init__(self, cfg, role="single"):
+        """role: "single" does everything; in two-hand mode "pointer" only moves the cursor (Point, fist clutch)
+        and "action" never moves it, so a thumb tap there clicks without disturbing the pointer hand."""
+        self.cfg, self.role = cfg, role
         self.reset()
 
     def reset(self):
         self.raw = self.current = None
         self.since = self.entered = 0.0
-        self.pos = None
+        self.pos = self.ref = None
         self.filters = [OneEuro(self.cfg["min_cutoff"], self.cfg["beta"]) for _ in range(2)]
         self.down = False
         self.last_y = None
-        self.scroll_acc = 0.0
+        self.step_acc = 0.0
         self.last_fire = {}
         self.palm = deque()
 
     def update(self, t, gesture, anchor):
         """t: seconds; gesture: name, or None when no hand; anchor: (x, y) in 0-1 of the camera frame."""
         out = []
+        if self.role == "pointer" and gesture not in POINTER_GESTURES:
+            gesture = None
         if gesture != self.raw:
             self.raw, self.since = gesture, t
         if gesture != self.current and t - self.since >= self.cfg["hold_ms"] / 1000:
@@ -73,19 +109,37 @@ class Engine:
             self.current, self.entered = gesture, t
             out += self._enter(t)
         if anchor is None:
+            self.ref = None
             return out
-        out += self._swipe(t, gesture, anchor[0])
-        self._track(t, anchor)
+        out += self._flick(t, gesture, anchor[0])
+        smooth = [f(v, t) for f, v in zip(self.filters, anchor)]
+        x0, y0, x1, y1 = self.cfg["box"]
+        spans = ((x0, max(x1 - x0, 1e-3)), (y0, max(y1 - y0, 1e-3)))
+        self.pos = tuple(min(max((v - lo) / span, 0.0), 1.0) for v, (lo, span) in zip(smooth, spans))
         act = self._action(self.current)
+        # raw == current: freeze as soon as the pose starts changing (into a fist or a thumb tap), not 150 ms later
+        moving = bool(act) and self.role != "action" and act["type"] == "mouse" and self.raw == self.current and (
+            act["value"] == "move" or (act["value"] == "left" and t - self.entered >= self.cfg["drag_ms"] / 1000))
+        if not moving:
+            self.ref = None  # any non-moving pose is a clutch: relative mode resumes from the new hand position
+        elif self.cfg["cursor_mode"] == "relative":
+            if self.ref is not None:
+                speed = self.cfg["relative_speed"]
+                out.append(("move_by", *((v - r) / span * speed for v, r, (_, span) in zip(smooth, self.ref, spans))))
+            self.ref = smooth
+        else:
+            out.append(("move", *self.pos))
         if not act:
             return out
-        if act["type"] == "mouse":
-            value = act["value"]
-            if value == "move" or (value == "left" and t - self.entered >= self.cfg["drag_ms"] / 1000):
-                out.append(("move", *self.pos))
-            elif value == "scroll":
-                out += self._scroll(anchor[1])
-        elif act.get("repeat"):
+        if act["type"] == "mouse" and act["value"] == "scroll":
+            steps = self._steps(anchor[1])
+            if steps:
+                out.append(("scroll", steps))
+        elif act["type"] == "slider":
+            steps = self._steps(anchor[1])
+            up, down = (c.strip() for c in act["value"].split(","))
+            out += [("run", {"type": "keys", "value": up if steps > 0 else down})] * abs(steps)
+        elif act["type"] in ("keys", "shell") and act.get("repeat"):
             out += self._fire(self.current, act, t)
         return out
 
@@ -97,14 +151,15 @@ class Engine:
         act = self._action(self.current)
         if not act:
             return []
-        if act["type"] != "mouse" or act["value"] == "right":
-            return self._fire(self.current, act, t)
-        if act["value"] == "left":
+        if act["type"] == "slider" or (act["type"] == "mouse" and act["value"] == "scroll"):
+            self.last_y, self.step_acc = None, 0.0
+            return []
+        if act["type"] == "mouse" and act["value"] == "left":
             self.down = True
             return [("press",)]
-        if act["value"] == "scroll":
-            self.last_y, self.scroll_acc = None, 0.0
-        return []
+        if act["type"] == "mouse" and act["value"] == "move":
+            return []
+        return self._fire(self.current, act, t)
 
     def _exit(self):
         if self.down:
@@ -118,33 +173,27 @@ class Engine:
         self.last_fire[name] = t
         return [("run", act)]
 
-    def _track(self, t, anchor):
-        x0, y0, x1, y1 = self.cfg["box"]
-        target = [min(max((a - lo) / max(hi - lo, 1e-3), 0.0), 1.0) for a, lo, hi in ((anchor[0], x0, x1), (anchor[1], y0, y1))]
-        self.pos = tuple(f(v, t) for f, v in zip(self.filters, target))
-
-    def _scroll(self, y):
-        out = []
+    def _steps(self, y):
+        """Whole steps of vertical hand motion since the last frame; up is positive."""
+        steps = 0
         if self.last_y is not None:
-            self.scroll_acc += (self.last_y - y) * self.cfg["scroll_speed"]
-            steps = int(self.scroll_acc)
-            self.scroll_acc -= steps
-            if steps:
-                out.append(("scroll", steps))
+            self.step_acc += (self.last_y - y) * self.cfg["scroll_speed"]
+            steps = int(self.step_acc)
+            self.step_acc -= steps
         self.last_y = y
-        return out
+        return steps
 
-    def _swipe(self, t, gesture, x):
-        if gesture != "Open_Palm":
+    def _flick(self, t, gesture, x):
+        if gesture != "Three_Finger":
             self.palm.clear()
             return []
         self.palm.append((t, x))
-        while t - self.palm[0][0] > SWIPE_WINDOW:
+        while t - self.palm[0][0] > FLICK_WINDOW:
             self.palm.popleft()
         dx = x - self.palm[0][1]
-        if abs(dx) < SWIPE_DIST:
+        if abs(dx) < FLICK_DIST:
             return []
         self.palm.clear()
-        name = "Swipe_Right" if dx > 0 else "Swipe_Left"
+        name = "Flick_Right" if dx > 0 else "Flick_Left"
         act = self._action(name)
         return self._fire(name, act, t) if act else []

@@ -24,11 +24,23 @@ def press_combo(combo):
         keyboard.release(k)
 
 
+_remainder = [0.0, 0.0]  # sub-pixel leftovers of relative moves, so slow motion isn't rounded away
+
+
 def execute(event, cfg):
     kind = event[0]
     if kind == "move":
         left, top, width, height = screen_rect()
         mouse.position = (left + round(event[1] * (width - 1)), top + round(event[2] * (height - 1)))
+    elif kind == "move_by":
+        _, _, width, height = screen_rect()
+        _remainder[0] += event[1] * width
+        _remainder[1] += event[2] * height
+        step = [int(r) for r in _remainder]
+        _remainder[0] -= step[0]
+        _remainder[1] -= step[1]
+        if any(step):
+            mouse.move(*step)
     elif kind == "press":
         mouse.press(Button.left)
     elif kind == "release":

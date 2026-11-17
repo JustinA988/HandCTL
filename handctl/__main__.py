@@ -7,18 +7,25 @@ import winreg
 from pathlib import Path
 
 from pynput import keyboard
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-    QMenu, QMessageBox, QPushButton, QSpinBox, QStyle, QSystemTrayIcon, QTableWidget, QTabWidget,
+    QMenu, QMessageBox, QPushButton, QSlider, QSpinBox, QStyle, QSystemTrayIcon, QTableWidget, QTabWidget,
     QVBoxLayout, QWidget,
 )
 
 from . import config
 from .tracker import Tracker, list_cameras
+from .wizard import Wizard
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+HANDS_HELP = (
+    "Single: one hand does everything.\n"
+    "Two: the pointer hand only moves the cursor (point to move, fist to lift it). The other hand does everything else: "
+    "thumb taps to click, two fingers to scroll, volume, desktops and media. Clicking with the other hand means the "
+    "pointer hand never has to move to click."
+)
 
 
 def set_autostart(on):
@@ -42,6 +49,36 @@ def spin(lo, hi, step=None):
     if step:
         w.setSingleStep(step)
     return w
+
+
+class Slider(QWidget):
+    """Labelled slider with a real-valued range; value()/setValue() work like a spin box."""
+
+    def __init__(self, lo, hi, step, decimals=2):
+        super().__init__()
+        self.decimals, self.scale = decimals, 10 ** decimals  # QSlider only does integers
+        self.slider = QSlider(Qt.Orientation.Horizontal)
+        self.slider.setRange(round(lo * self.scale), round(hi * self.scale))
+        self.slider.setSingleStep(max(1, round(step * self.scale)))
+        self.slider.setPageStep(max(1, round(step * self.scale)) * 5)
+        self.text = QLabel()
+        self.text.setMinimumWidth(48)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(self.slider, 1)
+        row.addWidget(self.text)
+        self.slider.valueChanged.connect(self._show)
+
+    def _show(self, raw):
+        self.text.setText(f"{raw / self.scale:.{self.decimals}f}")
+
+    def value(self):
+        v = round(self.slider.value() / self.scale, self.decimals)
+        return int(v) if self.decimals == 0 else v
+
+    def setValue(self, v):
+        self.slider.setValue(round(v * self.scale))
+        self._show(self.slider.value())
 
 
 def combo(items):
@@ -71,6 +108,22 @@ def put(w, v):
         w.setValue(v)
 
 
+def form(*rows):
+    """A tab page: rows are (label, widget), a lone widget, or a lone string (a wrapped note)."""
+    page = QWidget()
+    f = QFormLayout(page)
+    for row in rows:
+        if isinstance(row, str):
+            note = QLabel(row)
+            note.setWordWrap(True)
+            f.addRow(note)
+        elif isinstance(row, tuple):
+            f.addRow(*row)
+        else:
+            f.addRow(row)
+    return page
+
+
 class Settings(QWidget):
     def __init__(self, app):
         super().__init__()
@@ -78,29 +131,24 @@ class Settings(QWidget):
         self.setWindowTitle("handctl settings")
 
         self.fields = {
-            "hand": combo(["Right", "Left"]), "toggle_hotkey": QLineEdit(),
-            "hold_ms": spin(0, 2000), "drag_ms": spin(0, 2000),
+            "hand_mode": combo(["single", "two"]), "hand": combo(["Right", "Left"]),
+            "mirror": QCheckBox("Mirror camera image"),
+            "cursor_mode": combo(["absolute", "relative"]), "relative_speed": Slider(0.2, 10, 0.1, 1),
+            "min_cutoff": Slider(0.1, 5, 0.1, 1), "beta": Slider(0, 20, 0.5, 1),
+            "tap_threshold": Slider(0.05, 1, 0.01, 2), "pinch_threshold": Slider(0.05, 1, 0.05, 2),
+            "hold_ms": Slider(0, 1000, 10, 0), "drag_ms": Slider(0, 1500, 10, 0), "scroll_speed": Slider(1, 200, 1, 0),
+            "toggle_hotkey": QLineEdit(),
             "shell_enabled": QCheckBox("Allow gestures to run shell commands"),
             "autostart": QCheckBox("Start with Windows"),
-            "mirror": QCheckBox("Mirror camera image"), "min_cutoff": spin(0.1, 5, 0.1), "beta": spin(0, 20, 0.5),
-            "pinch_threshold": spin(0.05, 1, 0.05), "scroll_speed": spin(1, 200),
         }
         self.box = [spin(0, 1, 0.05) for _ in range(4)]
+        f = self.fields
 
+        # Preview tab: camera picker, live image, status
         self.preview = QLabel("Starting camera...")
         self.preview.setMinimumSize(640, 480)
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status = QLabel()
-        calibration = QFormLayout()
-        for label, w in zip(["Cursor area left", "top", "right", "bottom"], self.box):
-            calibration.addRow(label, w)
-        calibration.addRow(self.fields["mirror"])
-        calibration.addRow("Steadiness (lower = steadier)", self.fields["min_cutoff"])
-        calibration.addRow("Responsiveness (higher = less lag)", self.fields["beta"])
-        calibration.addRow("Pinch threshold", self.fields["pinch_threshold"])
-        calibration.addRow("Scroll speed", self.fields["scroll_speed"])
-        preview_tab = QWidget()
-        row = QHBoxLayout(preview_tab)
         self.camera = QComboBox()
         self.camera.activated.connect(self.switch_camera)  # user picks only; filling the list must not restart tracking
         rescan = QPushButton("Refresh")
@@ -110,20 +158,19 @@ class Settings(QWidget):
         pick.addWidget(self.camera, 1)
         pick.addWidget(rescan)
         self.fill_cameras(app.cfg["camera"])  # runs before tracking starts, so every camera is free to probe
-        left = QVBoxLayout()
-        left.addLayout(pick)
-        left.addWidget(self.preview)
-        left.addWidget(self.status)
-        row.addLayout(left)
-        row.addLayout(calibration)
+        preview_tab = QWidget()
+        pv = QVBoxLayout(preview_tab)
+        pv.addLayout(pick)
+        pv.addWidget(self.preview)
+        pv.addWidget(self.status)
 
+        # Gestures tab: what each gesture does
         self.table = QTableWidget(len(config.GESTURES), 5)
         self.table.setHorizontalHeaderLabels(["Gesture", "Action", "Value", "Cooldown ms", "Repeat while held"])
         self.rows = []
         for i, name in enumerate(config.GESTURES):
-            label = QLabel(name)
             cells = [combo(config.ACTION_TYPES), QLineEdit(), spin(0, 10000), QCheckBox()]
-            self.table.setCellWidget(i, 0, label)
+            self.table.setCellWidget(i, 0, QLabel(name))
             for col, w in enumerate(cells, 1):
                 self.table.setCellWidget(i, col, w)
             self.rows.append((name, *cells))
@@ -134,24 +181,35 @@ class Settings(QWidget):
         gestures_tab = QWidget()
         g = QVBoxLayout(gestures_tab)
         g.addWidget(self.table)
-        g.addWidget(QLabel(
+        help_text = QLabel(
             "Action values - mouse: move, left, right, scroll | keys: <ctrl>+<alt>+t, <cmd>+d, <media_next> | "
-            "shell: any command (only runs if enabled under General)."))
+            "slider (raise/lower the hand): <up combo>,<down combo> | "
+            "shell: any command (only runs if enabled under Settings > General).")
+        help_text.setWordWrap(True)
+        g.addWidget(help_text)
         g.addWidget(reset)
 
-        general_tab = QWidget()
-        f = QFormLayout(general_tab)
-        f.addRow("Tracked hand", self.fields["hand"])
-        f.addRow("Toggle hotkey", self.fields["toggle_hotkey"])
-        f.addRow("Hold before firing (ms)", self.fields["hold_ms"])
-        f.addRow("Pinch hold before drag (ms)", self.fields["drag_ms"])
-        f.addRow(self.fields["shell_enabled"])
-        f.addRow(self.fields["autostart"])
+        # Settings tab with sub-tabs
+        wizard = QPushButton("Run setup wizard")
+        wizard.clicked.connect(lambda: self.app.run_wizard())
+        sub = QTabWidget()
+        sub.addTab(form(("Hand mode", f["hand_mode"]), ("Pointer hand", f["hand"]), f["mirror"], HANDS_HELP), "Hands")
+        sub.addTab(form(
+            ("Cursor mode", f["cursor_mode"]), ("Relative speed", f["relative_speed"]),
+            ("Steadiness (lower = steadier)", f["min_cutoff"]), ("Responsiveness (higher = less lag)", f["beta"]),
+            ("Cursor area left", self.box[0]), ("top", self.box[1]), ("right", self.box[2]), ("bottom", self.box[3]),
+        ), "Cursor")
+        sub.addTab(form(
+            ("Thumb tap threshold", f["tap_threshold"]), ("Pinch threshold", f["pinch_threshold"]),
+            ("Hold before firing (ms)", f["hold_ms"]), ("Hold before drag (ms)", f["drag_ms"]), ("Scroll speed", f["scroll_speed"]),
+            "Raise a threshold if the gesture doesn't trigger; lower it if it triggers by accident.",
+        ), "Gesture tuning")
+        sub.addTab(form(("Toggle hotkey", f["toggle_hotkey"]), f["shell_enabled"], f["autostart"], wizard), "General")
 
         tabs = QTabWidget()
-        tabs.addTab(preview_tab, "Preview && calibration")
+        tabs.addTab(preview_tab, "Preview")
         tabs.addTab(gestures_tab, "Gestures")
-        tabs.addTab(general_tab, "General")
+        tabs.addTab(sub, "Settings")
         save = QPushButton("Save && apply")
         save.clicked.connect(self.save)
         layout = QVBoxLayout(self)
@@ -230,6 +288,8 @@ class App:
     def __init__(self, qapp):
         self.cfg = config.load()
         self.tracker = self.hotkey = None
+        self.calibrating = False  # the wizard keeps tracking off while it measures
+        self.sample_hook = self.frame_hook = None  # the wizard listens here
         self.tray = QSystemTrayIcon(qapp.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
         self.tray.setToolTip("handctl")
         menu = QMenu()
@@ -250,6 +310,10 @@ class App:
         self.settings.raise_()
         self.settings.activateWindow()
 
+    def run_wizard(self):
+        self.show_settings()
+        Wizard(self.settings).exec()
+
     def stop(self):
         if self.hotkey:
             self.hotkey.stop()
@@ -260,12 +324,19 @@ class App:
     def apply(self, cfg):
         self.stop()
         self.cfg = cfg
-        self.tracker = Tracker(cfg)
+        self.tracker = Tracker(cfg, enabled=not self.calibrating)
         self.tracker.preview = self.settings.isVisible()
-        self.tracker.frame.connect(self.settings.show_frame)
+
+        def frame(image, text):
+            self.settings.show_frame(image, text)
+            if self.frame_hook:
+                self.frame_hook(image, text)
+
+        self.tracker.frame.connect(frame)
+        self.tracker.sample.connect(lambda hands: self.sample_hook and self.sample_hook(hands))
         self.tracker.error.connect(lambda msg: self.tray.showMessage("handctl", msg, QSystemTrayIcon.MessageIcon.Warning))
         self.tracker.toggled.connect(self.toggle_action.setChecked)
-        self.toggle_action.setChecked(True)
+        self.toggle_action.setChecked(not self.calibrating)
         self.tracker.start()
         self.hotkey = keyboard.GlobalHotKeys({cfg["toggle_hotkey"]: self.tracker.toggle})
         self.hotkey.start()
@@ -293,6 +364,8 @@ def main():
     app = App(qapp)
     if "--tray" not in sys.argv:
         app.show_settings()
+        if not app.cfg["wizard_done"]:
+            QTimer.singleShot(0, app.run_wizard)  # first launch: walk through setup once the window is up
     sys.exit(qapp.exec())
 
 

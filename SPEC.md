@@ -43,7 +43,7 @@ Poses come from MediaPipe's free on-device Gesture Recognizer (it returns hand l
 ## Settings window
 
 1. **Preview** — live camera feed with landmarks and the detected gesture name.
-2. **Calibration** — cursor box edges as number fields (drawn on the preview), mirror toggle, smoothing, pinch threshold, scroll speed.
+2. **Calibration** — (v1 layout; v2 moves these to the Settings tab, see Roadmap) cursor box edges as number fields (drawn on the preview), mirror toggle, steadiness, responsiveness, pinch threshold, scroll speed.
 3. **Gestures** — table: gesture → action type → value (key combo or command) → cooldown. "Reset to defaults" button.
 4. **General** — camera index, hand (L/R), toggle hotkey, enable shell commands, start with Windows.
 
@@ -74,11 +74,36 @@ Dependencies: `mediapipe`, `opencv-python`, `PySide6`, `pynput`. Nothing else.
 
 ## Roadmap
 
-### v2
-- **Hand modes:** single-hand mode (as in v1) or two-hand mode with separate roles: one hand moves the cursor, the other triggers clicks and actions. A setting swaps which hand does which.
-- **New gestures:** replace the gesture set with ergonomic signs chosen from a short research pass (comfort, low arm fatigue, reliable detection). Pinch click and drag is the first to replace. New signs get approved before they are built.
-- **Settings:** a dedicated Settings tab with sub-tabs, using sliders for tuning values.
-- **First-run calibration wizard:** camera choice, cursor area, and a quick test of each gesture.
+### v2 (built on branch `v2/gestures`)
+- **Hand modes:** single-hand mode (as in v1) or two-hand mode with separate roles. The pointer hand only moves the cursor (point; fist = lift); the other hand does everything else, clicks included, so the pointer never moves to click and a thumb tap held on one hand while pointing with the other is a drag. A setting swaps which hand is the pointer. Roles are fixed per gesture (`POINTER_GESTURES` in `gestures.py`); per-gesture role editing is not built.
+- **Gestures:** an ergonomic set chosen from research (below).
+- **Settings:** a Settings tab with sub-tabs (Hands, Cursor, Gesture tuning, General), using sliders for tuning values.
+- **First-run setup wizard** (`wizard.py`): camera, cursor area (point at two screen corners), thumb-tap calibration, and a live check of each gesture. Tracking is off while it runs. If thumb taps can't be told apart on the camera, the wizard switches clicking to pinch.
+
+#### v2 gesture set and why
+
+Research findings behind it:
+- Arm held out at shoulder height is the most tiring mid-air posture ([Consumed Endurance, CHI 2014](https://hci.cs.umanitoba.ca/publications/details/consumed-endurance-a-metric-to-quantify-arm-fatigue-of-mid-air-interactions)), so the hand stays low with the elbow on the desk.
+- Thumb-to-index-finger microgestures are low-effort, and the finger side facing the thumb is the least demanding ([Saarland thesis on single-handed gesture input](https://hci.cs.uni-saarland.de/wp-content/uploads/Theses/Bachelors/Bachelor-thesis-lena-hegemann.pdf)); clicking with the thumb also keeps the pointing finger still.
+- An open palm facing forward causes wrist dorsiflexion, a common ergonomic issue in mid-air studies ([Exploring Mid-Air Hand Interaction in Data Visualization](https://arxiv.org/pdf/2311.15372)), so no gesture uses a flat palm and an open hand is simply "nothing".
+- Guiard's asymmetric bimanual model: the dominant hand does fine pointing, the other hand coarse actions ([overview](https://a11y-paradise.onrender.com/glossary/69e17e182d4c4de6f084c00f)). Evidence on the non-dominant hand clicking is mixed, hence swappable roles.
+- Webcam air pointing reaches under 75% of mouse throughput, partly from poor click detection ([SFU](https://vvise.iat.sfu.ca/user/data/papers/inairpointing.pdf)), hence the wizard's calibration and the pinch fallback.
+
+| Pose | Default action |
+|---|---|
+| Point (index finger out) | Move cursor |
+| Point + thumb tap on the side of the index finger | Left click; hold = drag |
+| Two fingers out (index + middle), move up/down | Scroll |
+| Two fingers + thumb tap | Right click |
+| Three fingers out (index, middle, ring), short wrist swipe left/right | Previous/next desktop |
+| Three fingers + thumb tap | Play/pause |
+| Thumbs up, raise/lower the hand | Volume up/down |
+| Fist | Nothing: freezes the cursor ("lift the mouse"), the clutch for relative mode |
+| Pinch, I-love-you | Unmapped; pinch is the fallback click |
+
+Rule of the set (the trackpad model): 1 finger moves and taps to click, 2 fingers scroll and tap to right-click, 3 fingers swipe to switch desktops and tap to play/pause.
+
+Also new: a relative ("trackpad") cursor mode as an option; absolute stays the default. Thumb tap's default threshold is untested on real cameras, so the wizard measures it per user and it's a slider in settings.
 
 ### v3
 - **Windows installer** (.msi / Inno Setup) with a Start Menu entry.
