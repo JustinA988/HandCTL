@@ -6,7 +6,7 @@ import random
 import pytest
 
 from handctl import config
-from handctl.gestures import FINGERS, Classifier, Engine, OneEuro, anchor, assign, features
+from handctl.gestures import FINGERS, Classifier, Engine, ModeSelector, OneEuro, anchor, assign, cut_off, features
 
 
 def cfg(**overrides):
@@ -25,7 +25,10 @@ def world(curl="", thumb="out"):
         pts[d], pts[t] = ((x, 4.0, -2.5), (x, 2.0, -2.5)) if name in curl else ((x, 6.5, 0.0), (x, 8.5, 0.0))
     ix, iy, iz = pts[8]
     mx, my, mz = pts[12]
-    pts[4] = {"out": (-9.0, -2.0, 0.0), "index": (ix - 1, iy, iz - 1), "middle": (mx + 1, my, mz - 1), "near": (ix - 4, iy, iz)}[thumb]
+    rx, ry, rz = pts[16]
+    px, py, pz = pts[20]
+    pts[4] = {"out": (-9.0, -2.0, 0.0), "index": (ix - 1, iy, iz - 1), "middle": (mx + 1, my, mz - 1), "near": (ix - 4, iy, iz),
+              "ring": (rx + 1, ry, rz - 1), "pinky": (px + 1, py, pz - 1)}[thumb]
     return pts
 
 
@@ -82,6 +85,10 @@ def test_poses():
         assert pose(c(), neutral) == "Hand"  # any unremarkable hand moves the cursor
     assert pose(c(), thumb="index") == "Pinch"
     assert pose(c(), thumb="middle") == "Pinch_Middle"
+    assert pose(c(), thumb="ring") == "Pinch_Ring"
+    assert pose(c(), thumb="pinky") == "Pinch_Pinky"
+    assert pose(c(), curl="r", thumb="ring") == "Hand"  # a curled finger touching the thumb isn't a pinch
+    assert pose(c(), curl="p", thumb="pinky") == "Hand"
     assert pose(c(), curl="imrp") == "Closed_Fist"
     assert pose(c(), curl="mrp", thumb="index") == "Pinch"  # pinch with the other fingers curled is still a pinch...
     assert pose(c(), "Closed_Fist", curl="mrp", thumb="index") == "Pinch"  # ...even if MediaPipe calls it a fist
@@ -90,6 +97,45 @@ def test_poses():
         assert pose(c(), trained, 0.9) == trained
     assert pose(c(), "Victory", 0.4) == "Hand"  # a half-formed pose doesn't fire
     assert pose(c(), "Thumb_Up", 0.4, curl="imrp") == "Closed_Fist"
+
+
+def test_a_fist_after_a_pinch_is_a_fist_not_a_stuck_pinch():
+    # found on a real recording: the thumb rests against a fist's index finger, which kept an earlier pinch "held" forever
+    c = Classifier(cfg())
+    assert pose(c, thumb="index") == "Pinch"
+    assert pose(c, curl="imrp", thumb="index") == "Closed_Fist"
+    assert pose(c, curl="imrp", thumb="out") == "Closed_Fist"
+    assert pose(c, thumb="out") == "Hand"
+
+
+def test_a_clear_pose_ends_a_held_fist():
+    # a thumbs-up and a peace sign also have curled fingers; they used to stay read as the fist that came before them
+    c = Classifier(cfg())
+    assert pose(c, curl="imrp") == "Closed_Fist"
+    assert pose(c, "Thumb_Up", 0.9, curl="imrp") == "Thumb_Up"
+    assert pose(c, curl="imrp") == "Closed_Fist"
+    assert pose(c, "Victory", 0.9, curl="rp") == "Victory"
+
+
+def test_a_held_pinch_moves_to_a_clearly_nearer_finger_but_not_a_slightly_nearer_one():
+    c = Classifier(cfg())
+    assert pose(c, thumb="index") == "Pinch"
+    w = world()
+    ix, iy, iz = w[8]
+    mx, my, mz = w[12]
+    slightly = list(w)
+    slightly[4] = ((ix + mx) / 2 - 0.1, iy, iz - 1)  # about the same distance from index and middle tips
+    assert c("None", 0.9, slightly)[0] == "Pinch"
+    clearly = list(w)
+    clearly[4] = (mx - 0.3, my, mz - 1)  # right on the middle fingertip
+    assert c("None", 0.9, clearly)[0] == "Pinch_Middle"
+
+
+def test_hands_cut_off_by_the_picture_edge_are_not_read():
+    inside = [(0.5, 0.5)] * 21
+    assert not cut_off(inside)
+    assert not cut_off([(0.5, 1.02), (0.5, 1.01)] + inside[2:])  # one or two points over the edge: still a usable hand
+    assert cut_off([(0.5, 1.02)] * 3 + inside[3:])  # hands resting at the bottom edge had up to 13 landmarks outside
 
 
 def test_pinch_does_not_flicker_near_the_threshold():
@@ -142,13 +188,21 @@ def test_held_pinch_drags_and_survives_a_tracking_dropout():
 def test_pose_must_be_held_before_it_fires_and_respects_cooldown():
     e = Engine(cfg())
     assert config.DEFAULTS["hold_ms"] == 100
-    assert run(e, hold("Victory", 0, 0.07)) == []  # a flash of the pose, shorter than the 100 ms hold, does nothing
-    events = run(e, hold("Victory", 0.07, 0.5))
-    assert [ev[1]["value"] for ev in events] == ["<media_play_pause>"]
-    again = run(e, hold("Hand", 0.5, 0.7) + hold("Victory", 0.7, 1.3))
+    assert run(e, hold("ILoveYou", 0, 0.07)) == []  # a flash of the pose, shorter than the 100 ms hold, does nothing
+    events = run(e, hold("ILoveYou", 0.07, 0.5))
+    assert [ev[1]["value"] for ev in events] == ["<cmd>+<tab>"]
+    again = run(e, hold("Hand", 0.5, 0.7) + hold("ILoveYou", 0.7, 1.3))
     assert "run" not in kinds(again)  # held long enough, but still inside the 1500 ms cooldown
-    later = run(e, hold("Hand", 1.3, 2.2) + hold("Victory", 2.2, 2.7))
+    later = run(e, hold("Hand", 1.3, 2.2) + hold("ILoveYou", 2.2, 2.7))
     assert kinds(later).count("run") == 1  # fires again once the cooldown has passed
+
+
+def test_peace_sign_is_right_click_where_the_cursor_was():
+    e = Engine(cfg())
+    drift = [(i * 0.033, "Hand", (0.4 + i * 0.004, 0.5)) for i in range(20)]  # the hand creeps as the fingers change shape
+    run(e, drift)
+    events = run(e, hold("Victory", 0.66, 0.9, (0.48, 0.5)))
+    assert [ev[1]["value"] for ev in events if ev[0] == "run"] == ["right"] and "move" in kinds(events)
 
 
 def test_fist_scrolls_and_does_not_move_the_cursor():
@@ -170,14 +224,70 @@ def test_cursor_freezes_while_the_hand_changes_shape():
     assert run(e, [(0.5, "Closed_Fist", (0.7, 0.7))]) == []  # closing into a fist doesn't drag the cursor along
 
 
-def test_two_hand_roles():
-    pointer, action = Engine(cfg(), "pointer"), Engine(cfg(), "action")
-    events = run(pointer, hold("Pinch", 0, 0.5) + hold("Thumb_Up", 0.5, 1.2) + hold("Closed_Fist", 1.2, 1.8))
-    assert set(kinds(events)) == {"move"}  # the pointer hand only ever moves the cursor
-    assert kinds(run(action, hold("Hand", 0, 0.3) + hold("Pinch", 0.3, 1.0))) == ["press"]  # clicks, never moves
-    assert kinds(run(action, hold("Hand", 1.0, 1.2))) == ["release"]
-    events = run(action, [(1.2 + i * 0.033, "Closed_Fist", (0.5, 0.8 - i * 0.01)) for i in range(40)])
-    assert "scroll" in kinds(events) and "move" not in kinds(events)
+def test_mode_selector_is_momentary_and_ignores_flickers():
+    s = ModeSelector(cfg())
+    assert [s.update(t, "Closed_Fist") for t in (0.0, 0.1)] == [None, None]  # not held long enough yet
+    assert s.update(0.2, "Closed_Fist") == "Edit"
+    assert s.update(0.25, "Hand") == "Edit" and s.update(0.3, "Closed_Fist") == "Edit"  # a flicker out of the pose changes nothing
+    assert [s.update(t, "Hand") for t in (0.4, 0.5, 0.6)] == ["Edit", "Edit", "Edit"]
+    assert s.update(0.7, "Hand") is None  # dropped for over 0.25 s: back to normal, like letting go of Shift
+    assert s.update(1.0, "Victory") is None and s.update(1.2, "Victory") == "Windows"
+    assert s.update(1.3, "Closed_Fist") == "Windows" and s.update(1.5, "Closed_Fist") == "Edit"  # straight to another mode
+    assert s.update(2.0, None) == "Edit" and s.update(2.3, None) is None  # the hand left the picture
+    assert s.update(3.0, "Pinch") is None and s.update(3.5, "Pinch") is None  # only the mode poses select modes
+
+
+def test_each_mode_has_its_own_pose_and_changing_it_works():
+    c = cfg(modes={**config.DEFAULTS["modes"], "Edit": "ILoveYou", "Browser": "Closed_Fist"})
+    s = ModeSelector(c)
+    s.update(0.0, "ILoveYou")
+    assert s.update(0.2, "ILoveYou") == "Edit"
+    s.update(1.0, "Closed_Fist")
+    assert s.update(1.2, "Closed_Fist") == "Browser"
+
+
+def test_mode_actions_replace_core_ones_and_core_ones_remain_elsewhere():
+    e = Engine(cfg())
+    e.mode = "Edit"
+    events = run(e, hold("Hand", 0, 0.2) + hold("Pinch", 0.2, 0.5))
+    assert [ev[1]["value"] for ev in events if ev[0] == "run"] == ["<ctrl>+c"] and "press" not in kinds(events)  # copy, not a click
+    # a gesture the mode doesn't use does its core job: thumbs up is still volume in Media mode
+    e = Engine(cfg())
+    e.mode = "Media"
+    events = run(e, hold("Thumb_Up", 0, 1.3))
+    assert {ev[1]["value"] for ev in events} == {"<media_volume_up>"} and len(events) >= 4
+    # but a mode's own gesture wins: the fist pastes in Edit mode instead of scrolling
+    e = Engine(cfg())
+    e.mode = "Edit"
+    events = run(e, hold("Hand", 0, 0.2) + [(0.2 + i * 0.033, "Closed_Fist", (0.5, 0.8 - i * 0.01)) for i in range(20)])
+    assert [ev[1]["value"] for ev in events if ev[0] == "run"] == ["<ctrl>+v"] and "scroll" not in kinds(events)
+    # and no mode at all means the plain click
+    events = run(Engine(cfg()), hold("Hand", 0, 0.2) + hold("Pinch", 0.2, 0.5))
+    assert "press" in kinds(events)
+
+
+def test_a_mode_change_mid_pose_does_not_switch_the_action():
+    e = Engine(cfg())
+    assert "press" in kinds(run(e, hold("Hand", 0, 0.2) + hold("Pinch", 0.2, 0.5)))  # a click has started
+    e.mode = "Edit"  # the other hand makes a fist while the pinch is still held
+    assert "run" not in kinds(run(e, hold("Pinch", 0.5, 0.9)))  # still the click/drag: no surprise Ctrl+C
+    assert kinds(run(e, hold("Hand", 0.9, 1.0)))[0] == "release"
+
+
+def test_zoom_middle_click_and_sideways_scroll():
+    e = Engine(cfg())
+    e.mode = "Browser"
+    run(e, hold("Hand", 0, 0.3))
+    events = run(e, [(0.3 + i * 0.033, "Closed_Fist", (0.5, 0.8 - i * 0.01)) for i in range(40)])
+    assert sum(ev[1] for ev in events if ev[0] == "zoom") > 0 and "scroll" not in kinds(events)  # fist zooms in Browser mode
+    events = run(Engine(cfg()), hold("Hand", 0, 0.5) + hold("Pinch_Ring", 0.5, 0.8))
+    assert [ev[1]["value"] for ev in events if ev[0] == "run"] == ["middle"] and "move" in kinds(events)
+    c = cfg()
+    c["mappings"]["Closed_Fist"] = {"type": "mouse", "value": "hscroll"}
+    e = Engine(c)
+    run(e, hold("Hand", 0, 0.3))
+    right = run(e, [(0.3 + i * 0.033, "Closed_Fist", (0.3 + i * 0.01, 0.5)) for i in range(40)])
+    assert sum(ev[1] for ev in right if ev[0] == "hscroll") > 0  # hand moving right scrolls right
 
 
 def test_assign_hands_by_position():
@@ -227,7 +337,8 @@ def test_default_smoothing_balances_steadiness_and_lag():
 
 def test_defaults_are_valid_and_bad_values_rejected():
     assert config.validate(cfg()) == []
-    assert set(config.DEFAULTS["mappings"]) == set(config.GESTURES)
+    assert set(config.DEFAULTS["mappings"]) <= set(config.GESTURES)  # slots a mode leaves empty simply fall back to the core action
+    assert len(config.GESTURES) == 10 + 5 * 9 and all(f"{m}/Pinch" in config.DEFAULTS["mappings"] for m in config.MODES)
     c = cfg(hand_mode="three")
     c["box"] = [0.5, 0, 0.5, 1]
     c["mappings"]["Victory"]["value"] = "<notakey>"
@@ -262,8 +373,34 @@ def test_older_settings_keep_camera_but_get_new_gesture_mappings(tmp_path):
     p.write_text(json.dumps(old))
     loaded = config.load(p)
     assert loaded["camera"] == 1 and loaded["min_cutoff"] == 0.5 and "cursor_mode" not in loaded
-    assert loaded["mappings"] == config.DEFAULTS["mappings"] and loaded["version"] == 3
+    assert loaded["mappings"] == config.DEFAULTS["mappings"] and loaded["version"] == 4
     assert loaded["wizard_done"] is False  # the wizard is offered again, because it now calibrates pinch
+
+
+def test_version_3_settings_keep_the_users_mappings_and_gain_the_new_ones(tmp_path):
+    p = tmp_path / "config.json"
+    mine = {"type": "keys", "value": "<ctrl>+<alt>+t", "cooldown_ms": 700}
+    p.write_text(json.dumps({"version": 3, "wizard_done": True, "camera": 1, "mappings": {"Victory": mine, "Pinch": {"type": "none", "value": ""}}}))
+    loaded = config.load(p)
+    assert loaded["version"] == 4 and loaded["wizard_done"] is True and loaded["camera"] == 1  # nothing to redo
+    assert loaded["mappings"]["Victory"] == mine and loaded["mappings"]["Pinch"]["type"] == "none"  # their edits survive
+    assert loaded["mappings"]["Edit/Pinch"] == config.DEFAULTS["mappings"]["Edit/Pinch"]  # the new modes are filled in
+    assert loaded["modes"] == config.DEFAULTS["modes"]
+
+
+def test_mode_poses_are_validated_and_a_damaged_table_costs_nothing_else(tmp_path):
+    assert any("same pose" in e for e in config.validate(cfg(modes={**config.DEFAULTS["modes"], "Edit": "Thumb_Up"})))
+    assert any("must be one of" in e for e in config.validate(cfg(modes={**config.DEFAULTS["modes"], "Edit": "Pinch"})))
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"version": 4, "camera": 1, "modes": {"Edit": "Thumb_Up"}}))  # duplicates Media's pose
+    loaded = config.load(p)
+    assert loaded["modes"] == config.DEFAULTS["modes"] and loaded["camera"] == 1
+
+
+def test_every_default_key_combo_is_valid_and_dangerous_ones_have_cooldowns():
+    assert config.validate(cfg()) == []  # includes parsing every key combo
+    slow = lambda name: config.DEFAULTS["mappings"][name]["cooldown_ms"] >= 1500
+    assert slow("Windows/Pinch_Pinky") and config.DEFAULTS["mappings"]["System/Pinch_Middle"]["cooldown_ms"] >= 2500  # close window, lock screen
 
 
 def test_old_hand_modes_become_auto_and_keep_everything_else(tmp_path):

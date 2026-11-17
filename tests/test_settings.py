@@ -28,6 +28,22 @@ def test_settings_window_round_trips_defaults_and_two_hand_mode(fake_app):
     assert (cfg["hand_mode"], cfg["hand"]) == ("one", "Left") and config.validate(cfg) == []
 
 
+def test_every_gesture_has_a_row_and_mode_poses_can_be_changed(fake_app):
+    from handctl.__main__ import Settings
+    s = Settings(fake_app)
+    assert [row[0] for row in s.rows] == config.POSE_NAMES + [f"{m}/{p}" for m in config.MODES for p in config.SLOTS]
+    s.mode_poses["Edit"].setCurrentText("ILoveYou")
+    s.mode_poses["Browser"].setCurrentText("Closed_Fist")
+    cfg = s.read()
+    assert cfg["modes"]["Edit"] == "ILoveYou" and cfg["modes"]["Browser"] == "Closed_Fist" and config.validate(cfg) == []
+    s.mode_poses["Media"].setCurrentText("ILoveYou")  # now two modes want the same pose
+    assert any("same pose" in e for e in config.validate(s.read()))
+    row = next(r for r in s.rows if r[0] == "Edit/Pinch")  # the table shows what the mode does, and edits flow back
+    assert row[1].currentText() == "keys" and row[2].text() == "<ctrl>+c"
+    row[2].setText("<ctrl>+<shift>+c")
+    assert s.read()["mappings"]["Edit/Pinch"]["value"] == "<ctrl>+<shift>+c"
+
+
 def test_save_applies_and_persists(fake_app, monkeypatch):
     import handctl.__main__ as main
     monkeypatch.setattr(main, "set_autostart", lambda on: None)  # never touch the real registry in tests

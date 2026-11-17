@@ -21,11 +21,18 @@ from .wizard import MonitorCalibration, Wizard
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 HANDS_HELP = (
-    "Auto: both hands are tracked. With one hand in view, it does everything. With both in view, the pointer hand "
-    "only moves the cursor, whatever shape it makes, and the other hand does everything else: pinch to click, fist "
-    "to scroll, thumbs for volume, peace sign for play/pause. Clicking with the other hand means the pointer never "
-    "moves when you click.\n"
-    "One: only one hand is ever tracked, so a second hand in view (say, typing) is ignored."
+    "Auto: both hands are tracked. With one hand in view, it does everything (the core gestures). With both in view, "
+    "the main hand keeps moving the cursor and doing the core gestures, and the other hand picks a mode by holding a "
+    "pose, like holding Shift: while it does, the main hand's pinches, thumbs and signs do that mode's actions "
+    "(Edit, Media, Windows, Browser, System). Let go and everything returns to normal.\n"
+    "One: only one hand is ever tracked, so a second hand in view (say, typing) is ignored.\n"
+    "Choose each mode's pose below; each mode needs its own."
+)
+GESTURES_HELP = (
+    "Core: what each gesture does on its own. The other tabs: what the main hand's gestures do while the other hand "
+    "holds that mode's pose (set on Settings > Hands). A mode gesture left at 'none' does its core action instead. "
+    "Action values - mouse: move, left, right, middle, scroll, hscroll, zoom | keys: <ctrl>+<alt>+t, <cmd>+d, <media_next> | "
+    "shell: any command (only runs if enabled under Settings > General)."
 )
 MONITORS_HELP = (
     "With two or more monitors, your hand controls the monitor you are looking at, and the cursor jumps to it when "
@@ -172,35 +179,30 @@ class Settings(QWidget):
         pv.addWidget(self.preview)
         pv.addWidget(self.status)
 
-        # Gestures tab: what each gesture does
-        self.table = QTableWidget(len(config.GESTURES), 5)
-        self.table.setHorizontalHeaderLabels(["Gesture", "Action", "Value", "Cooldown ms", "Repeat while held"])
+        # Gestures tab: what each gesture does, one table for the core gestures and one per mode
         self.rows = []
-        for i, name in enumerate(config.GESTURES):
-            cells = [combo(config.ACTION_TYPES), QLineEdit(), spin(0, 10000), QCheckBox()]
-            self.table.setCellWidget(i, 0, QLabel(name))
-            for col, w in enumerate(cells, 1):
-                self.table.setCellWidget(i, col, w)
-            self.rows.append((name, *cells))
-        self.table.resizeColumnsToContents()
-        self.table.horizontalHeader().setStretchLastSection(True)
+        groups = QTabWidget()
+        groups.addTab(self.table_for("Core", config.POSE_NAMES), "Core")
+        for mode in config.MODES:
+            groups.addTab(self.table_for(mode, [f"{mode}/{pose}" for pose in config.SLOTS]), mode)
         reset = QPushButton("Reset gestures to defaults")
         reset.clicked.connect(lambda: self.put_mappings(config.DEFAULTS["mappings"]))
         gestures_tab = QWidget()
         g = QVBoxLayout(gestures_tab)
-        g.addWidget(self.table)
-        help_text = QLabel(
-            "Action values - mouse: move, left, right, scroll | keys: <ctrl>+<alt>+t, <cmd>+d, <media_next> | "
-            "shell: any command (only runs if enabled under Settings > General).")
-        help_text.setWordWrap(True)
-        g.addWidget(help_text)
+        g.addWidget(QLabel(GESTURES_HELP))
+        g.itemAt(0).widget().setWordWrap(True)
+        g.addWidget(groups)
         g.addWidget(reset)
 
         # Settings tab with sub-tabs
         wizard = QPushButton("Run setup wizard")
         wizard.clicked.connect(lambda: self.app.run_wizard())
         sub = QTabWidget()
-        sub.addTab(form(("Hand mode", f["hand_mode"]), ("Pointer hand (when both are in view)", f["hand"]), f["mirror"], HANDS_HELP), "Hands")
+        self.mode_poses = {mode: combo(config.MODE_POSES) for mode in config.MODES}
+        sub.addTab(form(
+            ("Hand mode", f["hand_mode"]), ("Main hand (moves the cursor)", f["hand"]), f["mirror"], HANDS_HELP,
+            *[(f"{mode} mode: other hand makes", box) for mode, box in self.mode_poses.items()],
+        ), "Hands")
         sub.addTab(form(
             ("Steadiness (lower = steadier)", f["min_cutoff"]), ("Responsiveness (higher = less lag)", f["beta"]),
             ("Cursor area left", self.box[0]), ("top", self.box[1]), ("right", self.box[2]), ("bottom", self.box[3]),
@@ -228,6 +230,20 @@ class Settings(QWidget):
         layout.addWidget(save)
         self.load(app.cfg)
 
+    def table_for(self, group, names):
+        """A table with one row per mapping name; its widgets are collected in self.rows."""
+        table = QTableWidget(len(names), 5)
+        table.setHorizontalHeaderLabels(["Gesture", "Action", "Value", "Cooldown ms", "Repeat while held"])
+        for i, name in enumerate(names):
+            cells = [combo(config.ACTION_TYPES), QLineEdit(), spin(0, 10000), QCheckBox()]
+            table.setCellWidget(i, 0, QLabel(name.split("/")[-1].replace("_", " ")))
+            for col, w in enumerate(cells, 1):
+                table.setCellWidget(i, col, w)
+            self.rows.append((name, *cells))
+        table.resizeColumnsToContents()
+        table.horizontalHeader().setStretchLastSection(True)
+        return table
+
     def fill_cameras(self, current):
         found = list_cameras()
         self.camera.clear()
@@ -250,6 +266,8 @@ class Settings(QWidget):
             put(w, cfg[key])
         for w, v in zip(self.box, cfg["box"]):
             w.setValue(v)
+        for mode, box in self.mode_poses.items():
+            box.setCurrentText(cfg["modes"][mode])
         calibrated = len(cfg["monitor_gaze"])
         self.monitor_note.setText(f"Calibrated for {calibrated} monitors." if calibrated >= 2 else "Not calibrated yet.")
         self.put_mappings(cfg["mappings"])
@@ -266,6 +284,7 @@ class Settings(QWidget):
         cfg = copy.deepcopy(self.app.cfg)
         cfg.update({key: get(w) for key, w in self.fields.items()})
         cfg["box"] = [w.value() for w in self.box]
+        cfg["modes"] = {mode: box.currentText() for mode, box in self.mode_poses.items()}
         cfg["mappings"] = {
             name: {"type": kind.currentText(), "value": value.text().strip(), "cooldown_ms": cooldown.value(), "repeat": repeat.isChecked()}
             for name, kind, value, cooldown, repeat in self.rows

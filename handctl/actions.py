@@ -4,11 +4,12 @@ import logging
 import subprocess
 from ctypes import wintypes
 
-from pynput.keyboard import Controller as Keyboard, HotKey
+from pynput.keyboard import Controller as Keyboard, HotKey, Key
 from pynput.mouse import Button, Controller as Mouse
 
 mouse = Mouse()
 keyboard = Keyboard()
+CLICKS = {"right": Button.right, "middle": Button.middle}
 active = None  # rectangle of the monitor the hand controls; None = the whole desktop (monitor switching off)
 
 
@@ -84,10 +85,15 @@ def execute(event, cfg):
         mouse.release(Button.left)
     elif kind == "scroll":
         mouse.scroll(0, event[1])
+    elif kind == "hscroll":
+        mouse.scroll(event[1], 0)
+    elif kind == "zoom":  # Ctrl + wheel zooms in browsers, editors and most apps
+        with keyboard.pressed(Key.ctrl):
+            mouse.scroll(0, event[1])
     elif kind == "run":
         act = event[1]
-        if act["type"] == "mouse" and act["value"] == "right":
-            mouse.click(Button.right)
+        if act["type"] == "mouse" and act["value"] in CLICKS:
+            mouse.click(CLICKS[act["value"]])
         elif act["type"] == "keys":
             press_combo(act["value"])
         elif act["type"] == "shell":

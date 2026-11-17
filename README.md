@@ -54,45 +54,70 @@ The first launch opens a setup wizard: pick your camera, mark the cursor area by
 
 ## Default gestures
 
-Raise your hand in view of the camera with your elbow resting on the desk or chair arm; holding your whole arm out tires it quickly. Your hand doesn't have to face the camera squarely: poses are read from the hand's 3D shape, and the camera can sit above, below or beside the screen.
+Raise a hand in view of the camera with your elbow resting on the desk or chair arm; holding your whole arm out tires it quickly. Your hand doesn't have to face the camera squarely: poses are read from the hand's 3D shape, and the camera can sit above, below or beside the screen.
+
+### One hand
 
 | Gesture | Action |
 |---|---|
 | Any open or relaxed hand | Move cursor (it follows the centre of your palm) |
 | Pinch thumb + index fingertip | Left click; keep pinching and move = drag |
-| Pinch thumb + middle fingertip | Right click |
+| Peace sign | Right click |
 | Fist, move up/down | Scroll |
-| Thumbs up / thumbs down (hold) | Volume up / down |
-| Peace sign | Play/pause |
-| "I love you" sign | Task view (pick a window or desktop from there) |
+| Thumbs up / thumbs down (hold) | Volume up / down (repeats) |
+| "I love you" sign | Task view |
+
+### Two hands: modes
+
+With both hands in view, your **main hand** (right by default; change it under Settings → Hands) keeps doing everything above. Your **other hand** holds a pose like a Shift key to pick a *mode*; while it does, the main hand's gestures do that mode's actions. Let go and everything returns to normal.
+
+| Other hand holds | Mode |
+|---|---|
+| Fist | Edit |
+| Thumbs up | Media |
+| Peace sign | Windows |
+| "I love you" sign | Browser |
+| Thumbs down | System |
+
+What the main hand's gestures do in each mode:
+
+| Main hand | Edit | Media | Windows | Browser | System |
+|---|---|---|---|---|---|
+| Pinch (thumb + index) | Copy | Play/pause | Switch app | Back | Screenshot |
+| Fist | Paste | Mute | Show desktop | Zoom (move up/down) | Voice typing |
+| Thumbs up | Redo | Volume up | Maximize | Next tab | Search |
+| Thumbs down | Undo | Volume down | Minimize | Previous tab | Notifications |
+| Peace sign | Save | Next track | Previous desktop | Close tab | Settings |
+| "I love you" | Select all | Previous track | Next desktop | Reopen closed tab | Emoji panel |
+
+Anything a mode doesn't use does its normal job (thumbs up is still volume in Media mode). Every mapping can be changed under the **Gestures** tab, which has a table for the normal gestures and one per mode, and each mode's pose can be changed under Settings → Hands. Actions can be mouse actions (`move`, `left`, `right`, `middle`, `scroll`, `hscroll`, `zoom`), key combos (`<ctrl>+<alt>+t`, `<cmd>+d`, `<media_next>`, in [pynput's HotKey format](https://pynput.readthedocs.io/en/latest/keyboard.html#global-hotkeys)), or shell commands.
+
+**Bonus pinches.** Thumb + middle (right click), thumb + ring (middle click) and thumb + pinky also have slots, with extra actions in the modes (cut, find, forward, refresh, new tab, close window, lock screen, task manager and more). On the camera these were tested on, the middle and ring pinches were mistaken for the index pinch and the pinky pinch worked about a third of the time, so nothing important depends on them. They may work better on your hands.
 
 How it avoids misfires and missed input:
 - The cursor needs no special pose, so it can't be "lost" by a finger out of place.
 - A click lands where the cursor was just before your fingers closed, and the cursor holds still while you pinch.
-- A pinch only ends when the fingers clearly part, so drags don't drop. A hand that vanishes for under 0.3 s (a tracking hiccup) changes nothing.
-- Fist, thumbs and the signs must be held for a quarter second before they act, and each action has a cooldown.
+- A pinch only ends when the fingers clearly part, and a straight finger is required to pinch, so a fist with the thumb against it isn't read as a pinch.
+- A hand that vanishes for under 0.3 s (a tracking hiccup) changes nothing. Poses other than the index pinch must be held about a tenth of a second, ring and pinky pinches a fifth, and each action has a cooldown.
+- A mode starts after its pose is held for 0.15 s and ends 0.25 s after you drop it, so a flicker doesn't flip modes. An action stays what it was when its gesture started, even if the mode changes underneath it.
+- Phantom hands are ignored: small hand-shaped detections on your face or hairline, and hands cut off by the edge of the picture (a hand resting at the bottom edge used to cause stray clicks).
+- Closing the mode hand's pose never moves the cursor or clicks: that hand only picks the mode.
 
-### Using both hands
-
-Both hands are tracked automatically. With one hand in view, it does everything. With both in view, the *pointer hand* (right by default; change it under **Settings → Hands**) only moves the cursor, whatever shape it makes, and the *other hand* does everything else. That way the pointer never moves when you click, and pinching with one hand while moving the other drags. A hand that drops out of view for a moment doesn't change who does what, and a drag in progress is never cut off by the other hand appearing. Hands are told apart by where they are in the picture, not by MediaPipe's left/right guess, which flips when a hand turns sideways.
+If a second hand gets in the way (for example while typing), set **Settings → Hands → Hand mode** to **one**: only one hand is ever tracked, and modes are off.
 
 To keep this fast, the app tracks with the cheaper one-hand mode and checks for a second hand four times a second, so a second hand is noticed within about a quarter of a second of appearing. (Always looking for two hands made every frame about 9 ms slower, even with one hand in view.)
 
-If a second hand gets in the way (for example while typing), set **Settings → Hands → Hand mode** to **one**: only one hand is ever tracked.
-
-Remap anything under the **Gestures** tab: an action is a mouse action (`move`, `left`, `right`, `scroll`), a key combo (`<ctrl>+<alt>+t`, `<cmd>+d`, `<media_next>`, in [pynput's HotKey format](https://pynput.readthedocs.io/en/latest/keyboard.html#global-hotkeys)), or a shell command.
-
-Settings saved by an earlier version keep your camera and calibration, but their gesture mappings are reset to the current defaults because the gesture names changed.
+Settings saved by an earlier version keep your camera, calibration and your own mappings; the new modes are added alongside them. Settings from version 2 or earlier have their mappings reset because the gesture names changed.
 
 **Shell commands are disabled by default.** Enable them under Settings → General only if you trust every command in your mappings.
 
 ## Settings window
 
-Three tabs: **Preview** (camera picker and live image), **Gestures** (what each gesture does) and **Settings**, with sub-tabs **Hands**, **Cursor**, **Gesture tuning** (sliders for the pinch threshold, hold times and scroll speed) and **General**.
+Three tabs: **Preview** (camera picker and live image), **Gestures** (what each gesture does: Core, then one table per mode) and **Settings**, with sub-tabs **Hands** (hand mode, main hand, each mode's pose), **Cursor**, **Gesture tuning** (sliders for the pinch threshold, hold times and scroll speed), **Monitors** and **General**. The Preview status line names the pose each hand is making, a live pinch number, and the mode that is active.
 
 ## If it doesn't pick up your hand
 
-- Open the **Preview** tab: green dots should sit on your hand, and the status line names the pose it sees and a live pinch number.
+- Open the **Preview** tab: green dots should sit on your hand, and the status line names the pose it sees and a live pinch number. If a hand is doing nothing, check it isn't cut off by the picture's edge.
 - Dots missing or flickering: add light (dim rooms blur a moving hand), keep the whole hand in frame, and move a little closer.
 - Pinches not clicking, or clicking by accident: re-run the wizard's pinch step, or set **Pinch threshold** between the pinch numbers you see with fingers touching and with your hand open.
 

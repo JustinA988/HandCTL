@@ -15,9 +15,14 @@ from .gaze import calibrate
 CHECK = [  # (gesture, what to do)
     ("Hand", "Hold up an open, relaxed hand (this moves the cursor)"),
     ("Pinch", "Touch your thumb and index fingertips together (left click)"),
-    ("Pinch_Middle", "Touch your thumb and middle fingertips together (right click)"),
-    ("Closed_Fist", "Make a fist (scroll)"), ("Thumb_Up", "Thumbs up (volume up)"),
-    ("Thumb_Down", "Thumbs down (volume down)"), ("Victory", "Peace sign (play/pause)"),
+    ("Pinch_Middle", "Thumb and middle fingertips together (bonus: right click; may read as an index pinch on your camera)"),
+    ("Pinch_Ring", "Thumb and ring fingertips together (bonus: middle click; may read as an index pinch)"),
+    ("Pinch_Pinky", "Thumb and pinky fingertips together (bonus: a mode action; partly reliable)"),
+    ("Closed_Fist", "Make a fist (scroll; with the other hand, Edit mode)"),
+    ("Thumb_Up", "Thumbs up (volume up; with the other hand, Media mode)"),
+    ("Thumb_Down", "Thumbs down (volume down; with the other hand, System mode)"),
+    ("Victory", "Peace sign (right click; with the other hand, Windows mode)"),
+    ("ILoveYou", "Thumb, index and pinky out (task view; with the other hand, Browser mode)"),
 ]
 
 
@@ -158,7 +163,7 @@ class PinchPage(Page):
         self.collectors[which].start()
 
     def on_sample(self, wizard, hands):
-        hand = role_hand(hands, wizard.app.cfg, "action")
+        hand = role_hand(hands, wizard.app.cfg, "pointer")  # the main hand is the one that pinches
         if hand:
             for c in self.collectors.values():
                 c.add(hand["feat"]["pinch"])

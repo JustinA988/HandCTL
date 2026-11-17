@@ -4,14 +4,25 @@ from collections import deque
 
 PALM = (0, 5, 9, 13, 17)  # wrist + the four knuckles: barely moves when fingers pinch or curl
 FINGERS = ((5, 6, 7, 8), (9, 10, 11, 12), (13, 14, 15, 16), (17, 18, 19, 20))  # index, middle, ring, pinky joints
-PINCHES = {"Pinch": "pinch", "Pinch_Middle": "pinch_middle"}  # gesture name -> feature it is measured by
+PINCHES = {"Pinch": "pinch", "Pinch_Middle": "pinch_middle", "Pinch_Ring": "pinch_ring", "Pinch_Pinky": "pinch_pinky"}  # pose -> feature
+PINCH_FINGER = {"Pinch": 0, "Pinch_Middle": 1, "Pinch_Ring": 2, "Pinch_Pinky": 3}  # the finger touching the thumb in each pinch
+SCROLLS = ("scroll", "hscroll", "zoom")  # mouse actions driven by moving the hand
 POSES = ("Thumb_Up", "Thumb_Down", "Victory", "ILoveYou")  # MediaPipe's trained poses, used as they come
 POSE_SCORE = 0.6  # below this confidence a trained pose is ignored, so half-formed poses don't fire actions
-CURLED = 0.6  # finger extension below this = curled (a straight finger is 1.0, a fist about 0.4)
+CURLED = 0.72  # a finger straighter than this can pinch. Measured on one user: pinching fingers 0.85-0.97, fist fingers 0.43-0.65
+FIST = 0.72  # average straightness of the four fingers below this is a fist (measured: fists 0.42-0.68, open hands 0.85+)
 QUICK = ("Hand", "Pinch", "Pinch_Middle")  # these switch after QUICK_HOLD so clicks feel instant; the rest wait hold_ms
+SLOW = {"Pinch_Ring": 0.2, "Pinch_Pinky": 0.25}  # seconds. Ring and pinky pinches are harder to tell from the index finger
 QUICK_HOLD = 0.06  # seconds, about two frames
 GRACE = 0.3  # seconds a hand may vanish (tracking dropout) before it counts as gone
 LOOKBACK = 0.1  # seconds: a click lands where the cursor was before the closing fingers nudged the hand
+
+
+def cut_off(lm, limit=3):
+    """True when the picture's edge cuts the hand off (a hand resting at the bottom edge, say): its pose can't be read, and
+    guessing made stray clicks. Measured on one user: hands being used had 0-1 landmarks outside the picture, never 3 or more
+    except while entering it; hands cut off by the edge had up to 13."""
+    return sum(1 for x, y in lm if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0)) >= limit
 
 
 def anchor(lm):
@@ -21,16 +32,18 @@ def anchor(lm):
 
 def features(world):
     """Shape measures from MediaPipe's 3D world landmarks, so they hold when the hand is tilted or turned.
-    pinch / pinch_middle: thumb tip to index / middle fingertip, in hand sizes (small = touching).
+    pinch, pinch_middle, pinch_ring, pinch_pinky: thumb tip to that fingertip, in hand sizes (small = touching).
     ext: per finger, straight-line knuckle-to-tip distance over the finger's length."""
     size = math.dist(world[0], world[9])
     ext = [math.dist(world[m], world[t]) / (math.dist(world[m], world[p]) + math.dist(world[p], world[d]) + math.dist(world[d], world[t]))
            for m, p, d, t in FINGERS]
-    return {"pinch": math.dist(world[4], world[8]) / size, "pinch_middle": math.dist(world[4], world[12]) / size, "ext": ext}
+    return {"pinch": math.dist(world[4], world[8]) / size, "pinch_middle": math.dist(world[4], world[12]) / size,
+            "pinch_ring": math.dist(world[4], world[16]) / size, "pinch_pinky": math.dist(world[4], world[20]) / size, "ext": ext}
 
 
 class Classifier:
-    """Names the pose of one hand: Hand (anything unremarkable), Pinch, Pinch_Middle, Closed_Fist or one of POSES.
+    """Names the pose of one hand: Hand (anything unremarkable), a Pinch (thumb to index, middle, ring or pinky fingertip),
+    Closed_Fist, or one of POSES.
     Keeps state so a pinch or fist doesn't flicker when its measure sits near the threshold."""
 
     def __init__(self, cfg):
@@ -40,20 +53,24 @@ class Classifier:
         """canned, score: MediaPipe's gesture name and confidence. Returns (pose name, features)."""
         f = features(world)
         enter = self.cfg["pinch_threshold"]
+        mean = sum(f["ext"]) / 4
+        # a finger curled into a fist can't be pinching, however close it sits to the thumb; holding a pinch is a bit more lenient
+        near = {name: f[PINCHES[name]] for name, finger in PINCH_FINGER.items() if f["ext"][finger] >= CURLED - 0.1}
         if self.held in PINCHES:
-            still = f[PINCHES[self.held]] < enter * 1.5  # fingers must clearly part before a pinch ends
-        else:
-            still = self.held == "Closed_Fist" and max(f["ext"]) < CURLED + 0.1
-        if still:
-            return self.held, f
+            d = near.get(self.held)
+            closer = min(near, key=near.get) if near else None
+            # fingers must clearly part before a pinch ends, and it moves to another finger once that one is clearly closer
+            if d is not None and d < enter * 1.5 and not (closer != self.held and near[closer] < enter and near[closer] < 0.8 * d):
+                return self.held, f
+        elif self.held == "Closed_Fist" and mean < FIST + 0.1 and not (canned in POSES and score >= POSE_SCORE):
+            return self.held, f  # (a thumbs-up or peace sign also has curled fingers, so a clear pose ends the fist)
         self.held = None
-        # the pinching finger must not be curled up, which is what tells a pinch from a fist
-        pinches = [name for name, finger in (("Pinch", 0), ("Pinch_Middle", 1)) if f[PINCHES[name]] < enter and f["ext"][finger] >= CURLED]
-        if pinches:
-            self.held = min(pinches, key=lambda name: f[PINCHES[name]])
+        starts = {name: d for name, d in near.items() if d < enter and f["ext"][PINCH_FINGER[name]] >= CURLED}
+        if starts:
+            self.held = min(starts, key=starts.get)
         elif canned in POSES and score >= POSE_SCORE:
             return canned, f
-        elif f["ext"][0] < CURLED and (canned == "Closed_Fist" or max(f["ext"]) < CURLED):
+        elif mean < FIST or (canned == "Closed_Fist" and mean < FIST + 0.1):
             self.held = "Closed_Fist"
         return self.held or "Hand", f
 
@@ -74,6 +91,31 @@ def assign(found, last, t, mirror=True):
         if len(recent) == 2 or math.dist(recent[side], pos) < 0.25:  # it's the hand that was just there
             return {side: 0}
     return {label: 0}
+
+
+class ModeSelector:
+    """Which mode the other hand is holding. A mode is a pose held like a Shift key: it starts after HOLD_IN seconds of the
+    pose and ends HOLD_OUT seconds after it is dropped or the hand leaves, so a flicker doesn't flip modes."""
+    HOLD_IN, HOLD_OUT = 0.15, 0.25
+
+    def __init__(self, cfg):
+        self.poses = {pose: mode for mode, pose in cfg["modes"].items()}
+        self.reset()
+
+    def reset(self):
+        self.mode = None
+        self.pending = None  # (the mode being moved to, since when); a tuple, because "no mode" is a target too
+
+    def update(self, t, pose):
+        """pose: what the mode hand is doing, or None when it isn't in view. Returns the current mode name, or None."""
+        want = self.poses.get(pose)
+        if want == self.mode:
+            self.pending = None
+        elif self.pending is None or self.pending[0] != want:
+            self.pending = (want, t)
+        elif t - self.pending[1] >= (self.HOLD_IN if want else self.HOLD_OUT):
+            self.mode, self.pending = want, None
+        return self.mode
 
 
 def _alpha(cutoff, dt):
@@ -103,11 +145,13 @@ class OneEuro:
 
 class Engine:
     """One hand's state machine. update() returns events: ("move", x, y) with x, y in 0-1 of the screen,
-    ("press",), ("release",), ("scroll", steps), ("run", mapping).
-    role: "single" does everything; in two-hand mode "pointer" only moves the cursor and "action" never moves it."""
+    ("press",), ("release",), ("scroll", steps), ("hscroll", steps), ("zoom", steps), ("run", mapping).
+    `mode` is set from outside (the other hand's pose, see ModeSelector): a pose then first looks for a "Mode/Pose" mapping
+    and falls back to the plain "Pose" one, so the common actions keep working in every mode."""
 
-    def __init__(self, cfg, role="single"):
-        self.cfg, self.role = cfg, role
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.mode = None
         self.last_fire = {}
         self.reset()
 
@@ -118,7 +162,8 @@ class Engine:
         self.filters = [OneEuro(self.cfg["min_cutoff"], self.cfg["beta"]) for _ in range(2)]
         self.trail = deque()
         self.down = False
-        self.last_y = None
+        self.action = None  # (mapping name, mapping) chosen when the current pose started, so a mode change can't switch it mid-pose
+        self.last_v = None
         self.step_acc = 0.0
 
     def update(self, t, gesture, pos):
@@ -130,12 +175,10 @@ class Engine:
             self.reset()
             return out
         self.seen = t
-        if self.role == "pointer":
-            gesture = "Hand"  # the pointer hand only ever moves the cursor, whatever shape it makes
         out = []
         if gesture != self.raw:
             self.raw, self.since = gesture, t
-        hold = QUICK_HOLD if gesture in QUICK else self.cfg["hold_ms"] / 1000
+        hold = SLOW.get(gesture) or (QUICK_HOLD if gesture in QUICK else self.cfg["hold_ms"] / 1000)
         if gesture != self.current and t - self.since >= hold:
             out += self._exit()
             self.current, self.entered = gesture, t
@@ -146,45 +189,51 @@ class Engine:
         self.trail.append((t, self.pos))
         while t - self.trail[0][0] > 1.0:
             self.trail.popleft()
-        act = self._action(self.current)
-        if not act or self.raw != self.current:
+        if not self.action or self.raw != self.current:
             return out  # while the hand is changing shape (fingers closing to pinch), everything holds still
+        name, act = self.action
         if act["type"] == "mouse":
             value = act["value"]
-            if self.role != "action" and (value == "move" or (value == "left" and t - self.entered >= self.cfg["drag_ms"] / 1000)):
+            if value == "move" or (value == "left" and t - self.entered >= self.cfg["drag_ms"] / 1000):
                 out.append(("move", *self.pos))
-            elif value == "scroll":
-                steps = self._steps(smooth[1])
+            elif value in SCROLLS:
+                horizontal = value == "hscroll"  # moving the hand sideways scrolls sideways; up or down does the rest
+                steps = self._steps(smooth[0 if horizontal else 1], 1 if horizontal else -1)
                 if steps:
-                    out.append(("scroll", steps))
+                    out.append((value, steps))
         elif act.get("repeat"):
-            out += self._fire(self.current, act, t)
+            out += self._fire(name, act, t)
         return out
 
-    def _action(self, name):
-        act = self.cfg["mappings"].get(name) if name else None
-        return act if act and act["type"] != "none" else None
+    def _pick(self, pose):
+        """(name, mapping) for a pose: the current mode's version if it has one, else the plain one."""
+        mappings = self.cfg["mappings"]
+        names = [f"{self.mode}/{pose}", pose] if self.mode else [pose]
+        for name in names:
+            act = mappings.get(name)
+            if act and act["type"] != "none":
+                return name, act
+        return None
 
     def _enter(self, t):
-        act = self._action(self.current)
-        if not act:
+        self.action = self._pick(self.current)
+        if not self.action:
             return []
+        name, act = self.action
         if act["type"] != "mouse":
-            return self._fire(self.current, act, t)
-        if act["value"] == "scroll":
-            self.last_y, self.step_acc = None, 0.0
+            return self._fire(name, act, t)
+        if act["value"] in SCROLLS:
+            self.last_v, self.step_acc = None, 0.0
         if act["value"] == "left":
             self.down = True
             return self._aim() + [("press",)]
-        if act["value"] == "right":
-            fired = self._fire(self.current, act, t)
+        if act["value"] in ("right", "middle"):
+            fired = self._fire(name, act, t)
             return self._aim() + fired if fired else []
         return []
 
     def _aim(self):
         """Put the cursor back where it was just before the fingers started closing, so the click lands on target."""
-        if self.role == "action":
-            return []
         past = [p for seen, p in self.trail if seen <= self.since - LOOKBACK]
         return [("move", *past[-1])] if past else []
 
@@ -200,12 +249,12 @@ class Engine:
         self.last_fire[name] = t
         return [("run", act)]
 
-    def _steps(self, y):
-        """Whole scroll steps of vertical hand motion since the last frame; up is positive."""
+    def _steps(self, v, sign):
+        """Whole scroll steps of hand motion along one axis since the last frame (sign +1: increasing v is positive)."""
         steps = 0
-        if self.last_y is not None:
-            self.step_acc += (self.last_y - y) * self.cfg["scroll_speed"]
+        if self.last_v is not None:
+            self.step_acc += (v - self.last_v) * sign * self.cfg["scroll_speed"]
             steps = int(self.step_acc)
             self.step_acc -= steps
-        self.last_y = y
+        self.last_v = v
         return steps

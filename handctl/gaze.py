@@ -29,6 +29,28 @@ def gaze(lm, width, height):
     return math.degrees(head_yaw + eye_yaw), math.degrees(head_pitch)
 
 
+def face_box(lm):
+    """Box (x0, y0, x1, y1) around one face's landmarks, as normalized (x, y)."""
+    xs, ys = [p[0] for p in lm], [p[1] for p in lm]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def face_part(hand, faces, small=0.45, reach=1.0):
+    """True when a detected "hand" is really a phantom on or around a face. MediaPipe sometimes reports a tiny hand-shaped
+    thing on the cheek or hairline. Measured on one user: phantoms were 0.27-0.42x the face's width, real open hands about
+    1.2x and real fists 0.5-0.65x. So a detection is dropped only if it is smaller than `small` x the face width AND centred
+    within `reach` face-widths/heights of the face.
+    hand: 21 (x, y) landmarks; faces: boxes from face_box(), in the same coordinates."""
+    xs, ys = [p[0] for p in hand], [p[1] for p in hand]
+    width = max(xs) - min(xs)
+    cx, cy = sum(xs) / len(xs), sum(ys) / len(ys)
+    for x0, y0, x1, y1 in faces:
+        fw, fh = x1 - x0, y1 - y0
+        if width < small * fw and x0 - reach * fw <= cx <= x1 + reach * fw and y0 - reach * fh <= cy <= y1 + reach * fh:
+            return True
+    return False
+
+
 def calibrate(samples, label=str):
     """samples: {monitor: [(yaw, pitch), ...]} recorded while the user looked at each monitor.
     Returns ({monitor: (yaw, pitch)}, problems): the monitors that can be used, and a plain-language line for each one

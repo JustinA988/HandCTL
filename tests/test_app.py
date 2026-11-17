@@ -47,13 +47,24 @@ def test_auto_mode_tracks_both_hands_by_default(qapp):
     assert {k: v["gesture"] for k, v in got.items()} == {"Left": "Pinch", "Right": "Hand"}
 
 
-def roles(t):
-    return {side: e.role for side, e in t.engines.items()}
-
-
 def frame(t, now, *hands):
     """One camera frame through the tracker: read the hands, then step the engines (mouse output is stubbed)."""
     t._step(now, t._read(fake_result(*hands), now))
+
+
+def right(**shape):  # the right hand, on the right of the (mirrored) picture
+    return "Right", "None", 0.7, world(**shape)
+
+
+def left(**shape):
+    return "Left", "None", 0.3, world(**shape)
+
+
+def frames(t, start, seconds, *hands, step=0.033):
+    """Feed the same hands for a while; returns the time it ended at."""
+    for i in range(round(seconds / step)):
+        frame(t, start + i * step, *hands)
+    return start + seconds
 
 
 @pytest.fixture
@@ -64,39 +75,123 @@ def quiet(monkeypatch):
     return events
 
 
-def test_one_hand_in_view_does_everything_two_hands_split_the_work(qapp, quiet):
+def combos(events):
+    return [e[1]["value"] for e in events if e[0] == "run"]
+
+
+def test_the_other_hand_picks_a_mode_and_the_main_hand_acts_in_it(qapp, quiet):
     t = Tracker(cfg(hand="Right"))
-    right, left = ("Right", "None", 0.7, world()), ("Left", "None", 0.3, world())
-    frame(t, 0.0, right)
-    assert roles(t)["Right"] == "single"
-    frame(t, 0.1, right, left)
-    assert roles(t) == {"Right": "pointer", "Left": "action"}
-    frame(t, 0.2, right)  # left hand drops out for one frame: a tracking hiccup, roles hold
-    assert roles(t) == {"Right": "pointer", "Left": "action"}
-    for now in (0.6, 0.7):
-        frame(t, now, right)  # left hand really gone: the right hand does everything again
-    assert roles(t)["Right"] == "single"
-    for now in (1.0, 1.1):
-        frame(t, now, left)  # only the left hand: it does everything, clicks included
-    assert roles(t)["Left"] == "single"
-    swapped = Tracker(cfg(hand="Left"))
-    frame(swapped, 0.0, right, left)
-    assert roles(swapped) == {"Left": "pointer", "Right": "action"}
+    now = frames(t, 0.0, 0.4, right(), left())  # both hands open: no mode
+    assert t.mode is None
+    now = frames(t, now, 0.4, right(), left(curl="imrp"))  # the other hand makes a fist: Edit mode
+    assert t.mode == "Edit"
+    quiet.clear()
+    now = frames(t, now, 0.4, right(thumb="index"), left(curl="imrp"))  # a pinch now copies instead of clicking
+    assert combos(quiet) == ["<ctrl>+c"] and "press" not in [e[0] for e in quiet]
+    quiet.clear()
+    now = frames(t, now, 0.4, right(thumb="ring"), left(curl="imrp"))  # ring finger pinch: find (a bonus slot)
+    assert combos(quiet) == ["<ctrl>+f"]
+    quiet.clear()
+    now = frames(t, now, 0.4, right(curl="imrp"), left(curl="imrp"))  # fist with the main hand too: paste, not scroll
+    assert combos(quiet) == ["<ctrl>+v"] and "scroll" not in [e[0] for e in quiet]
+    now = frames(t, now, 0.5, right(), left())  # the other hand lets go: back to normal
+    assert t.mode is None
+    quiet.clear()
+    frames(t, now, 0.4, right(thumb="index"), left())
+    assert "press" in [e[0] for e in quiet] and combos(quiet) == []  # a plain click again
+
+
+def test_each_mode_pose_selects_its_mode(qapp, quiet):
+    t = Tracker(cfg(hand="Right"))
+    # poses that MediaPipe names (thumbs, peace sign, I-love-you) arrive as its own gesture label
+    named = {"Media": "Thumb_Up", "Windows": "Victory", "Browser": "ILoveYou", "System": "Thumb_Down"}
+    now = 0.0
+    for mode, canned in named.items():
+        for i in range(12):
+            t._step(now, t._read(fake_result(right(), ("Left", canned, 0.3, world())), now))
+            now += 0.033
+        assert t.mode == mode, (mode, t.mode)
+        now = frames(t, now, 0.5, right(), left())  # let go between modes
+        assert t.mode is None  # (Edit's fist pose is exercised in the test above)
+
+
+def test_a_single_hand_in_view_only_has_the_core_gestures(qapp, quiet):
+    t = Tracker(cfg(hand="Right"))
+    now = frames(t, 0.0, 0.3, right())
+    frames(t, now, 0.4, right(thumb="index"))
+    assert t.mode is None and "press" in [e[0] for e in quiet]  # click, as always
+    t2 = Tracker(cfg(hand="Right"))
+    frames(t2, 0.0, 0.6, left(curl="imrp"))  # the left hand alone making a fist is just a fist (scroll), not a mode
+    assert t2.mode is None
 
 
 def test_a_drag_is_not_cut_off_when_the_second_hand_appears(qapp, quiet):
     t = Tracker(cfg(hand="Right"))
-    pinching, open_left = ("Right", "None", 0.7, world(thumb="index")), ("Left", "None", 0.3, world())
-    for i in range(10):
-        frame(t, i * 0.033, pinching)
+    now = frames(t, 0.0, 0.4, right(thumb="index"))
     assert t.engines["Right"].down and "press" in [e[0] for e in quiet]
-    for i in range(10, 20):
-        frame(t, i * 0.033, pinching, open_left)
-    assert t.engines["Right"].down and t.engines["Right"].role == "single"  # still dragging; role waits
-    assert "release" not in [e[0] for e in quiet]
-    for i in range(20, 30):
-        frame(t, i * 0.033, ("Right", "None", 0.7, world()), open_left)  # fingers part: drag ends, then roles split
-    assert "release" in [e[0] for e in quiet] and roles(t) == {"Right": "pointer", "Left": "action"}
+    now = frames(t, now, 0.4, right(thumb="index"), left())  # the other hand joins: the drag goes on
+    assert t.engines["Right"].down and "release" not in [e[0] for e in quiet]
+    now = frames(t, now, 0.4, right(thumb="index"), left(curl="imrp"))  # even a mode starting doesn't change the drag
+    assert t.mode == "Edit" and combos(quiet) == [] and t.engines["Right"].down
+    frames(t, now, 0.4, right(), left(curl="imrp"))  # fingers part: the click ends
+    assert "release" in [e[0] for e in quiet]
+
+
+def test_a_hand_that_becomes_the_mode_hand_lets_go_of_a_drag(qapp, quiet):
+    t = Tracker(cfg(hand="Right"))
+    now = frames(t, 0.0, 0.5, left(thumb="index"))  # only the left hand is in view, and it is dragging
+    assert t.engines["Left"].down
+    quiet.clear()
+    frames(t, now, 0.2, right(), left(thumb="index"))  # the right hand arrives: the left hand now only picks modes
+    assert ("release",) in quiet and not t.engines["Left"].down
+
+
+def test_modes_reset_when_tracking_is_paused(qapp, quiet):
+    t = Tracker(cfg(hand="Right"))
+    frames(t, 0.0, 0.5, right(), left(curl="imrp"))
+    assert t.mode == "Edit"
+    t.enabled = False
+    frame(t, 1.0, right(), left(curl="imrp"))
+    assert t.mode is None
+
+
+# --- phantom hands on the face --------------------------------------------------------------------------------------
+
+def wide_hand(x0, x1, y=0.5):
+    """A MediaPipe-style hand result whose landmarks spread from x0 to x1."""
+    ns = types.SimpleNamespace
+    xs = [x0 + (x1 - x0) * i / 20 for i in range(21)]
+    w = world()
+    return ns(hand_landmarks=[[ns(x=x, y=y) for x in xs]], hand_world_landmarks=[[ns(x=p[0], y=p[1], z=p[2]) for p in w]],
+              handedness=[[ns(category_name="Right")]], gestures=[[ns(category_name="None", score=0.9)]])
+
+
+def test_phantom_hands_on_the_face_are_dropped_but_real_hands_are_kept(qapp):
+    t = Tracker(cfg(hand_mode="one"))
+    t.faces = (0.0, [(0.3, 0.3, 0.5, 0.7)])  # a face, as seen a moment ago
+    assert t._read(fake_result(right()[:2] + (0.4, world())), 0.5) == {} and t.found == 0  # a tiny "hand" on the face
+    assert list(t._read(fake_result(right()[:2] + (0.9, world())), 0.5)) == [ANY] and t.found == 1  # the same hand elsewhere
+    assert list(t._read(wide_hand(0.2, 0.55), 0.5)) == [ANY]  # a real hand held in front of the face is as wide as it
+    assert t._read(wide_hand(0.4, 0.45), 0.5) == {} and t.found == 0  # a tiny one is not
+    assert list(t._read(wide_hand(0.4, 0.45), 2.0)) == [ANY]  # unless the face wasn't seen for over a second
+
+
+def test_a_hand_cut_off_by_the_picture_edge_is_ignored(qapp):
+    t = Tracker(cfg(hand_mode="one"))
+    ns = types.SimpleNamespace
+    points = [ns(x=0.5 + 0.01 * i, y=1.0 + 0.01 * i) for i in range(21)]  # most of it below the bottom edge
+    cut = ns(hand_landmarks=[points], hand_world_landmarks=[[ns(x=p[0], y=p[1], z=p[2]) for p in world()]],
+             handedness=[[ns(category_name="Right")]], gestures=[[ns(category_name="None", score=0.9)]])
+    assert t._read(cut, 0.0) == {} and t.found == 0
+    assert list(t._read(fake_result(right()), 0.0)) == [ANY]
+    assert list(t._read(fake_result(right()[:2] + (0.4, world())), 2.0)) == [ANY]  # the face wasn't seen for over a second
+
+
+def test_phantoms_do_not_keep_the_slow_two_hand_recognizer_on(qapp):
+    t = Tracker(cfg())
+    t.faces = (0.0, [(0.3, 0.3, 0.5, 0.7)])
+    t._read(fake_result(("Right", "None", 0.4, world()), ("Left", "None", 0.8, world())), 0.5)  # one phantom, one real hand
+    assert t.found == 1  # HandCount sees one hand, so tracking stays on the cheap recognizer
 
 
 def test_hand_count_uses_the_cheap_recognizer_and_probes_for_a_second_hand():
