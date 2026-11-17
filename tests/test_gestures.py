@@ -1,11 +1,12 @@
 import copy
 import json
+import math
 import random
 
 import pytest
 
 from handctl import config
-from handctl.gestures import Engine, OneEuro, classify
+from handctl.gestures import FINGERS, Classifier, Engine, OneEuro, anchor, assign, features
 
 
 def cfg(**overrides):
@@ -14,141 +15,181 @@ def cfg(**overrides):
     return c
 
 
-def run(engine, frames):
-    """frames: list of (t, gesture, anchor). Returns all events."""
+def world(curl="", thumb="out"):
+    """Synthetic 3D hand, size 10. curl: fully curled fingers ('i', 'm', 'r', 'p').
+    thumb: 'out', 'index' / 'middle' (touching that fingertip) or 'near' (0.4 hand sizes from the index tip)."""
+    pts = [(0.0, 0.0, 0.0)] * 21
+    pts[0] = (0.0, -10.0, 0.0)
+    for name, x, (m, p, d, t) in zip("imrp", (-2.5, 0.0, 2.5, 5.0), FINGERS):
+        pts[m], pts[p] = (x, 0.0, 0.0), (x, 4.0, 0.0)
+        pts[d], pts[t] = ((x, 4.0, -2.5), (x, 2.0, -2.5)) if name in curl else ((x, 6.5, 0.0), (x, 8.5, 0.0))
+    ix, iy, iz = pts[8]
+    mx, my, mz = pts[12]
+    pts[4] = {"out": (-9.0, -2.0, 0.0), "index": (ix - 1, iy, iz - 1), "middle": (mx + 1, my, mz - 1), "near": (ix - 4, iy, iz)}[thumb]
+    return pts
+
+
+def turned(pts, yaw=0.9, pitch=0.6):
+    """The same hand turned well away from the camera."""
     out = []
-    for t, g, a in frames:
-        out += engine.update(t, g, a)
+    for x, y, z in pts:
+        x, z = x * math.cos(yaw) + z * math.sin(yaw), -x * math.sin(yaw) + z * math.cos(yaw)
+        y, z = y * math.cos(pitch) - z * math.sin(pitch), y * math.sin(pitch) + z * math.cos(pitch)
+        out.append((x, y, z))
     return out
 
 
-def hold(gesture, start, end, anchor=(0.5, 0.5), step=0.033):
-    n = int((end - start) / step)
-    return [(start + i * step, gesture, anchor) for i in range(n)]
+def pose(c, canned="None", score=0.9, **hand):
+    return c(canned, score, world(**hand))[0]
+
+
+def run(engine, frames):
+    """frames: list of (t, gesture, pos). Returns all events."""
+    out = []
+    for t, g, p in frames:
+        out += engine.update(t, g, p)
+    return out
+
+
+def hold(gesture, start, end, pos=(0.5, 0.5), step=0.033):
+    n = int(round((end - start) / step))
+    return [(start + i * step, gesture, pos if gesture else None) for i in range(n)]
 
 
 def kinds(events):
     return [e[0] for e in events]
 
 
-def hand(up=(), thumb="out"):
-    """Synthetic right hand: wrist at the bottom, hand size 0.3. up: fingers extended ('i', 'm', 'r', 'p')."""
+# --- shape features and pose naming --------------------------------------------------------------------------------
+
+def test_features_do_not_change_when_the_hand_is_turned():
+    for hand in (world(), world(thumb="index"), world("imrp"), world("mrp", "index")):
+        flat, rotated = features(hand), features(turned(hand))
+        assert rotated["pinch"] == pytest.approx(flat["pinch"]) and rotated["ext"] == pytest.approx(flat["ext"])
+
+
+def test_anchor_is_the_palm_centre_and_ignores_fingers():
     lm = [(0.5, 0.5)] * 21
-    lm[0] = (0.5, 0.9)
-    for name, x, (mcp, pip, dip, tip) in (("i", 0.45, (5, 6, 7, 8)), ("m", 0.5, (9, 10, 11, 12)),
-                                          ("r", 0.55, (13, 14, 15, 16)), ("p", 0.6, (17, 18, 19, 20))):
-        lm[mcp], lm[pip] = (x, 0.6), (x, 0.5)
-        lm[dip], lm[tip] = ((x, 0.4), (x, 0.3)) if name in up else ((x, 0.55), (x, 0.62))
-    lm[4] = {"out": (0.25, 0.65), "tap": (0.44, 0.55), "pinch": lm[8]}[thumb]
-    return lm
+    moved = list(lm)
+    for tip in (4, 8, 12, 16, 20):
+        moved[tip] = (0.9, 0.1)  # fingers pinching or curling don't move the cursor anchor
+    assert anchor(lm) == anchor(moved) == pytest.approx((0.5, 0.5))
 
 
-def test_classify_poses():
-    c = cfg()
-    assert classify("None", hand("i"), c) == "Point"
-    assert classify("None", hand("i", "tap"), c) == "Point_Tap"
-    assert classify("None", hand("im"), c) == "Two_Finger"
-    assert classify("None", hand("im", "tap"), c) == "Two_Finger_Tap"
-    assert classify("None", hand("imr"), c) == "Three_Finger"
-    assert classify("None", hand("imr", "tap"), c) == "Three_Finger_Tap"
-    assert classify("None", hand(""), c) == "Closed_Fist"
-    assert classify("None", hand("mrp", "pinch"), c) == "Pinch"
-    assert classify("Closed_Fist", hand("", "pinch"), c) == "Closed_Fist"  # fist wins over pinch
-    for trusted in ("Thumb_Up", "ILoveYou"):
-        assert classify(trusted, hand(""), c) == trusted
-    # a finger pointing at the camera looks curled in 2D; MediaPipe's label rescues it
-    assert classify("Pointing_Up", hand(""), c) == "Point"
-    # flat open palm (wrist-straining, so not a gesture) and odd shapes do nothing
-    assert classify("Open_Palm", hand("imrp"), c) == "None"
-    assert classify("None", hand("ip"), c) == "None"
+def test_poses():
+    c = lambda: Classifier(cfg())
+    for neutral in ("None", "Open_Palm", "Pointing_Up"):
+        assert pose(c(), neutral) == "Hand"  # any unremarkable hand moves the cursor
+    assert pose(c(), thumb="index") == "Pinch"
+    assert pose(c(), thumb="middle") == "Pinch_Middle"
+    assert pose(c(), curl="imrp") == "Closed_Fist"
+    assert pose(c(), curl="mrp", thumb="index") == "Pinch"  # pinch with the other fingers curled is still a pinch...
+    assert pose(c(), "Closed_Fist", curl="mrp", thumb="index") == "Pinch"  # ...even if MediaPipe calls it a fist
+    assert pose(c(), curl="imrp", thumb="index") == "Closed_Fist"  # thumb resting on a curled index is a fist, not a click
+    for trained in ("Thumb_Up", "Thumb_Down", "Victory", "ILoveYou"):
+        assert pose(c(), trained, 0.9) == trained
+    assert pose(c(), "Victory", 0.4) == "Hand"  # a half-formed pose doesn't fire
+    assert pose(c(), "Thumb_Up", 0.4, curl="imrp") == "Closed_Fist"
 
 
-def test_gesture_must_hold_before_firing():
+def test_pinch_does_not_flicker_near_the_threshold():
+    c = Classifier(cfg())
+    assert pose(c, thumb="near") == "Hand"  # 0.4 hand sizes apart: not close enough to start a pinch
+    assert pose(c, thumb="index") == "Pinch"
+    assert pose(c, thumb="near") == "Pinch"  # ...but not far enough to end one
+    assert pose(c, "Thumb_Up", 0.9, thumb="near") == "Pinch"  # a held pinch (a drag) isn't interrupted by a misread pose
+    assert pose(c, thumb="out") == "Hand"
+
+
+# --- engine ---------------------------------------------------------------------------------------------------------
+
+def test_any_hand_moves_the_cursor_inside_the_box():
     e = Engine(cfg())
-    assert run(e, hold("Three_Finger_Tap", 0, 0.1)) == []
-    events = run(e, hold("Three_Finger_Tap", 0.1, 0.3))
-    assert kinds(events) == ["run"] and events[0][1]["value"] == "<media_play_pause>"
-
-
-def test_thumb_tap_clicks_without_moving_then_drags():
-    e = Engine(cfg())
-    events = run(e, hold("Point_Tap", 0, 0.25, (0.3, 0.5)))
-    assert kinds(events) == ["press"]  # cursor frozen during the click window
-    events = run(e, hold("Point_Tap", 0.25, 0.6, (0.4, 0.6)))
-    assert "move" in kinds(events)
-    events = run(e, hold("Point", 0.6, 0.9))
-    assert "release" in kinds(events)
-
-
-def test_two_finger_scroll_and_tap_right_click():
-    e = Engine(cfg())
-    frames = [(i * 0.033, "Two_Finger", (0.5, 0.8 - i * 0.02)) for i in range(20)]
-    assert sum(ev[1] for ev in run(e, frames) if ev[0] == "scroll") > 0  # hand up = scroll up
-    events = run(e, hold("Two_Finger_Tap", 0.7, 1.0))
-    assert [ev[1]["value"] for ev in events if ev[0] == "run"] == ["right"]
-
-
-def test_fist_and_unmapped_poses_do_nothing():
-    e = Engine(cfg())
-    assert run(e, hold("Closed_Fist", 0, 0.5) + hold("None", 0.5, 1.0) + hold("Three_Finger", 1.0, 1.5)) == []
-
-
-def test_cooldown():
-    e = Engine(cfg())
-    events = run(e, hold("Three_Finger_Tap", 0, 0.3) + hold("Three_Finger", 0.3, 0.6) + hold("Three_Finger_Tap", 0.6, 0.9))
-    assert kinds(events).count("run") == 1  # second play/pause is inside the 1000 ms cooldown
-
-
-def test_thumbs_up_slider_sets_volume_by_height():
-    e = Engine(cfg())
-    up = run(e, [(i * 0.033, "Thumb_Up", (0.5, 0.8 - i * 0.02)) for i in range(20)])
-    assert {ev[1]["value"] for ev in up if ev[0] == "run"} == {"<media_volume_up>"}
-    down = run(e, [(0.7 + i * 0.033, "Thumb_Up", (0.5, 0.42 + i * 0.02)) for i in range(20)])
-    assert {ev[1]["value"] for ev in down if ev[0] == "run"} == {"<media_volume_down>"}
-
-
-def test_three_finger_swipe_switches_desktops():
-    e = Engine(cfg())
-    frames = [(i * 0.033, "Three_Finger", (0.3 + i * 0.03, 0.5)) for i in range(8)]
-    assert [ev[1]["value"] for ev in run(e, frames) if ev[0] == "run"] == ["<cmd>+<ctrl>+<right>"]
-    e = Engine(cfg())
-    frames = [(i * 0.033, "Three_Finger", (0.7 - i * 0.03, 0.5)) for i in range(8)]
-    assert [ev[1]["value"] for ev in run(e, frames) if ev[0] == "run"] == ["<cmd>+<ctrl>+<left>"]
-    e = Engine(cfg())  # the same motion with another pose is not a swipe
-    assert run(e, [(i * 0.033, "Two_Finger", (0.3 + i * 0.03, 0.5)) for i in range(8)]) == []
-
-
-def test_absolute_cursor_maps_box_to_screen():
-    e = Engine(cfg())
-    run(e, hold("Point", 0, 1.0, (0.2, 0.3)))
+    assert "move" in kinds(run(e, hold("Hand", 0, 0.3)))
+    run(e, hold("Hand", 0.3, 1.3, (0.2, 0.2)))
     assert e.pos == pytest.approx((0.0, 0.0), abs=1e-3)
-    e.reset()
-    run(e, hold("Point", 0, 1.0, (0.95, 0.95)))
+    run(e, hold("Hand", 1.3, 2.3, (0.95, 0.95)))
     assert e.pos == pytest.approx((1.0, 1.0), abs=1e-3)  # clamped outside the box
 
 
-def test_relative_cursor_and_fist_clutch():
-    e = Engine(cfg(cursor_mode="relative"))
-    moved = lambda evs: sum(ev[1] for ev in evs if ev[0] == "move_by")
-    run(e, hold("Point", 0, 0.3, (0.3, 0.5)))
-    right = run(e, [(0.3 + i * 0.033, "Point", (0.3 + i * 0.01, 0.5)) for i in range(20)])
-    assert moved(right) > 0 and "move" not in kinds(right)
-    back = run(e, [(1.0 + i * 0.033, "Closed_Fist", (0.5 - i * 0.01, 0.5)) for i in range(20)])
-    assert "move_by" not in kinds(back)  # fist = lift the mouse
-    again = run(e, hold("Point", 1.7, 2.2, (0.3, 0.5)))
-    assert abs(moved(again)) < 0.01  # resuming from a new hand position doesn't jump the cursor
+def test_pinch_clicks_fast_and_the_cursor_holds_still():
+    e = Engine(cfg())
+    run(e, hold("Hand", 0, 0.5))
+    events = run(e, hold("Pinch", 0.5, 0.7))
+    assert kinds(events) == ["move", "press"]  # one aiming move, then the press, within 200 ms; no drift while pinched
+    assert kinds(run(e, hold("Hand", 0.7, 0.9)))[0] == "release"
 
 
-def test_two_hand_roles_pointer_moves_action_clicks():
+def test_click_lands_where_the_cursor_was_before_the_fingers_closed():
+    e = Engine(cfg())
+    drift = [(i * 0.033, "Hand", (0.4 + i * 0.004, 0.5)) for i in range(20)]  # hand creeping right as the fingers close
+    run(e, drift)
+    events = run(e, hold("Pinch", 0.66, 0.8, (0.48, 0.5)))
+    aim = next(ev for ev in events if ev[0] == "move")
+    assert aim[1] < e.pos[0]  # aimed back at the earlier position, not where the hand ended up
+
+
+def test_held_pinch_drags_and_survives_a_tracking_dropout():
+    e = Engine(cfg())
+    run(e, hold("Hand", 0, 0.3))
+    assert "press" in kinds(run(e, hold("Pinch", 0.3, 0.5)))
+    assert "move" in kinds(run(e, hold("Pinch", 0.5, 1.0, (0.6, 0.6))))  # past drag_ms the cursor follows again
+    assert run(e, hold(None, 1.0, 1.2)) == []  # hand lost for 200 ms: the drag is not dropped
+    assert "release" not in kinds(run(e, hold("Pinch", 1.2, 1.4, (0.6, 0.6))))
+    assert kinds(run(e, hold(None, 1.4, 2.0))) == ["release"]  # really gone: let go of the button
+
+
+def test_pose_must_be_held_before_it_fires_and_respects_cooldown():
+    e = Engine(cfg())
+    assert run(e, hold("Victory", 0, 0.2)) == []
+    events = run(e, hold("Victory", 0.2, 0.5))
+    assert [ev[1]["value"] for ev in events] == ["<media_play_pause>"]
+    again = run(e, hold("Hand", 0.5, 0.7) + hold("Victory", 0.7, 1.3))
+    assert "run" not in kinds(again)  # held long enough, but still inside the 1500 ms cooldown
+    later = run(e, hold("Hand", 1.3, 2.2) + hold("Victory", 2.2, 2.7))
+    assert kinds(later).count("run") == 1  # fires again once the cooldown has passed
+
+
+def test_fist_scrolls_and_does_not_move_the_cursor():
+    e = Engine(cfg())
+    run(e, hold("Hand", 0, 0.3))
+    events = run(e, [(0.3 + i * 0.033, "Closed_Fist", (0.5, 0.8 - i * 0.01)) for i in range(40)])
+    assert sum(ev[1] for ev in events if ev[0] == "scroll") > 0 and "move" not in kinds(events)  # hand up = scroll up
+
+
+def test_thumbs_repeat_volume_while_held():
+    e = Engine(cfg())
+    events = run(e, hold("Thumb_Up", 0, 1.3))
+    assert {ev[1]["value"] for ev in events} == {"<media_volume_up>"} and 4 <= len(events) <= 8
+
+
+def test_cursor_freezes_while_the_hand_changes_shape():
+    e = Engine(cfg())
+    run(e, hold("Hand", 0, 0.5))
+    assert run(e, [(0.5, "Closed_Fist", (0.7, 0.7))]) == []  # closing into a fist doesn't drag the cursor along
+
+
+def test_two_hand_roles():
     pointer, action = Engine(cfg(), "pointer"), Engine(cfg(), "action")
-    # the pointer hand ignores everything except Point and fist: a stray thumb tap or thumbs-up does nothing
-    assert run(pointer, hold("Point_Tap", 0, 0.5) + hold("Thumb_Up", 0.5, 1.0)) == []
-    assert "move" in kinds(run(pointer, hold("Point", 1.0, 1.4)))
-    # the action hand clicks and drags but never moves the cursor
-    events = run(action, hold("Point_Tap", 0, 0.8, (0.3, 0.5)))
-    assert kinds(events) == ["press"]
-    assert run(action, hold("Point", 0.8, 1.2)) == [("release",)]
-    assert run(action, hold("Closed_Fist", 1.2, 1.5)) == []
+    events = run(pointer, hold("Pinch", 0, 0.5) + hold("Thumb_Up", 0.5, 1.2) + hold("Closed_Fist", 1.2, 1.8))
+    assert set(kinds(events)) == {"move"}  # the pointer hand only ever moves the cursor
+    assert kinds(run(action, hold("Hand", 0, 0.3) + hold("Pinch", 0.3, 1.0))) == ["press"]  # clicks, never moves
+    assert kinds(run(action, hold("Hand", 1.0, 1.2))) == ["release"]
+    events = run(action, [(1.2 + i * 0.033, "Closed_Fist", (0.5, 0.8 - i * 0.01)) for i in range(40)])
+    assert "scroll" in kinds(events) and "move" not in kinds(events)
+
+
+def test_assign_hands_by_position():
+    left, right = ("Left", (0.3, 0.5)), ("Right", (0.7, 0.5))
+    assert assign([right, left], {}, 0) == {"Left": 1, "Right": 0}
+    assert assign([("Right", (0.3, 0.5)), ("Right", (0.7, 0.5))], {}, 0) == {"Left": 0, "Right": 1}  # wrong labels ignored
+    assert assign([left, right], {}, 0, mirror=False) == {"Left": 1, "Right": 0}  # unmirrored image: sides swap
+    assert assign([left], {}, 0) == {"Left": 0}  # nothing to go on but the label
+    seen = {"Right": (1.0, (0.7, 0.5))}
+    assert assign([("Left", (0.68, 0.52))], seen, 1.1) == {"Right": 0}  # label flipped, but it's the hand that was just there
+    assert assign([("Left", (0.2, 0.5))], seen, 1.1) == {"Left": 0}  # far from the right hand: the other hand
+    assert assign([("Left", (0.68, 0.52))], seen, 5.0) == {"Left": 0}  # stale history is ignored
+    assert assign([], seen, 1.1) == {}
 
 
 def test_one_euro_steadies_still_hand_and_keeps_up_with_fast_moves():
@@ -165,25 +206,16 @@ def test_one_euro_steadies_still_hand_and_keeps_up_with_fast_moves():
     assert out[-1] > 0.8  # reaches the target within ~150 ms, not seconds later
 
 
-def test_relative_moves_keep_sub_pixel_motion(monkeypatch):
-    from handctl import actions
-    moves = []
-    monkeypatch.setattr(actions, "mouse", type("FakeMouse", (), {"move": lambda self, dx, dy: moves.append((dx, dy))})())
-    monkeypatch.setattr(actions, "screen_rect", lambda: (0, 0, 1000, 1000))
-    monkeypatch.setattr(actions, "_remainder", [0.0, 0.0])
-    for _ in range(10):
-        actions.execute(("move_by", 0.00035, -0.00035), {})  # 0.35 px per frame: rounds to 0 on its own
-    assert sum(m[0] for m in moves) == 3 and sum(m[1] for m in moves) == -3  # 3.5 px total, 0.5 px carried over
-
+# --- settings file --------------------------------------------------------------------------------------------------
 
 def test_defaults_are_valid_and_bad_values_rejected():
     assert config.validate(cfg()) == []
-    c = cfg(cursor_mode="sideways", hand_mode="three")
+    assert set(config.DEFAULTS["mappings"]) == set(config.GESTURES)
+    c = cfg(hand_mode="three")
     c["box"] = [0.5, 0, 0.5, 1]
-    c["mappings"]["Three_Finger_Tap"]["value"] = "<notakey>"
-    c["mappings"]["Point"]["value"] = "triple"
-    c["mappings"]["Thumb_Up"]["value"] = "<media_volume_up>"  # slider needs two combos
-    assert len(config.validate(c)) == 6
+    c["mappings"]["Victory"]["value"] = "<notakey>"
+    c["mappings"]["Hand"]["value"] = "triple"
+    assert len(config.validate(c)) == 4
 
 
 def test_load_backs_up_broken_file_and_ignores_wrong_types(tmp_path):
@@ -191,18 +223,19 @@ def test_load_backs_up_broken_file_and_ignores_wrong_types(tmp_path):
     p.write_text("{broken")
     assert config.load(p) == config.DEFAULTS
     assert (tmp_path / "config.json.bak").read_text() == "{broken"
-    p.write_text(json.dumps({"version": 2, "camera": "zero", "beta": 2, "unknown": 5}))
+    p.write_text(json.dumps({"version": 3, "camera": "zero", "beta": 2, "unknown": 5}))
     loaded = config.load(p)
     assert loaded["camera"] == 0 and loaded["beta"] == 2 and "unknown" not in loaded
-    p.write_text(json.dumps({"version": 2, "box": [1, 2], "mappings": {"Point_Tap": {"type": "keys"}, "Thumb_Up": "x"}}))
+    p.write_text(json.dumps({"version": 3, "box": [1, 2], "mappings": {"Pinch": {"type": "keys"}, "Thumb_Up": "x"}}))
     assert config.load(p) == config.DEFAULTS  # malformed values fall back instead of crashing tracking
 
 
-def test_v1_settings_keep_camera_but_get_new_gesture_mappings(tmp_path):
+def test_older_settings_keep_camera_but_get_new_gesture_mappings(tmp_path):
     p = tmp_path / "config.json"
-    v1 = {"camera": 1, "min_cutoff": 0.5, "mappings": {"Pointing_Up": {"type": "mouse", "value": "move"}}}
-    p.write_text(json.dumps(v1))
+    old = {"version": 2, "camera": 1, "min_cutoff": 0.5, "cursor_mode": "relative", "wizard_done": True,
+           "mappings": {"Point_Tap": {"type": "mouse", "value": "left"}}}
+    p.write_text(json.dumps(old))
     loaded = config.load(p)
-    assert loaded["camera"] == 1 and loaded["min_cutoff"] == 0.5
-    assert loaded["mappings"] == config.DEFAULTS["mappings"] and loaded["version"] == 2
-    assert loaded["wizard_done"] is False  # v1 users get the setup wizard on first launch
+    assert loaded["camera"] == 1 and loaded["min_cutoff"] == 0.5 and "cursor_mode" not in loaded
+    assert loaded["mappings"] == config.DEFAULTS["mappings"] and loaded["version"] == 3
+    assert loaded["wizard_done"] is False  # the wizard is offered again, because it now calibrates pinch

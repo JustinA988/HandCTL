@@ -1,4 +1,4 @@
-"""First-run setup wizard: camera, cursor area, thumb-tap calibration, then a live check of each gesture."""
+"""First-run setup wizard: camera, cursor area, pinch calibration, then a live check of each gesture."""
 import copy
 import statistics
 import time
@@ -7,15 +7,14 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QComboBox, QLabel, QPushButton, QVBoxLayout, QWizard, QWizardPage
 
 from . import config
-from .gestures import tap_ratio
 
 CHECK = [  # (gesture, what to do)
-    ("Point", "Point with your index finger"), ("Point_Tap", "Point, then tap your thumb on the side of your index finger"),
-    ("Two_Finger", "Hold up index and middle fingers"), ("Two_Finger_Tap", "Two fingers, then tap your thumb"),
-    ("Three_Finger_Tap", "Three fingers (index, middle, ring), then tap your thumb"),
-    ("Closed_Fist", "Make a fist"), ("Thumb_Up", "Thumbs up"),
+    ("Hand", "Hold up an open, relaxed hand (this moves the cursor)"),
+    ("Pinch", "Touch your thumb and index fingertips together (left click)"),
+    ("Pinch_Middle", "Touch your thumb and middle fingertips together (right click)"),
+    ("Closed_Fist", "Make a fist (scroll)"), ("Thumb_Up", "Thumbs up (volume up)"),
+    ("Thumb_Down", "Thumbs down (volume down)"), ("Victory", "Peace sign (play/pause)"),
 ]
-NO_TAP = {"type": "none", "value": ""}
 
 
 def percentile(xs, p):
@@ -23,10 +22,12 @@ def percentile(xs, p):
     return xs[min(len(xs) - 1, int(p * len(xs)))]
 
 
-def tap_threshold(out, pressed):
-    """Midway between the pressed and thumb-out readings; None when they overlap (a tap can't be told apart)."""
-    hi, lo = percentile(pressed, 0.9), percentile(out, 0.1)
-    return round(max(0.05, (hi + lo) / 2), 2) if hi + 0.03 < lo else None
+def pinch_threshold(open_hand, pinched):
+    """Threshold between this user's pinched and open readings, or None when they are too close to tell apart.
+    A pinch ends at 1.5x the threshold, so the threshold is kept low enough that an open hand is clearly past that."""
+    hi, lo = percentile(pinched, 0.9), percentile(open_hand, 0.1)
+    threshold = round(min((hi + lo) / 2, lo / 1.6), 2)
+    return threshold if threshold > hi + 0.02 else None
 
 
 def box_from(top_left, bottom_right, min_span=0.15):
@@ -37,13 +38,12 @@ def box_from(top_left, bottom_right, min_span=0.15):
     return [round(min(max(v, 0.0), 1.0), 2) for v in (x0, y0, x1, y1)]
 
 
-def use_pinch_instead(mappings):
-    """Fallback when thumb tap can't be detected on this camera: pinch clicks, the tap gestures are switched off."""
-    mappings = copy.deepcopy(mappings)
-    mappings["Pinch"] = {"type": "mouse", "value": "left"}
-    for name in ("Point_Tap", "Two_Finger_Tap", "Three_Finger_Tap"):
-        mappings[name] = dict(NO_TAP)
-    return mappings
+def role_hand(hands, cfg, role):
+    """The hand that moves the cursor ("pointer") or clicks ("action"); the same hand in single-hand mode."""
+    if cfg["hand_mode"] == "single":
+        return next(iter(hands.values()), None)
+    other = "Left" if cfg["hand"] == "Right" else "Right"
+    return hands.get(cfg["hand"] if role == "pointer" else other)
 
 
 class Collector:
@@ -55,9 +55,6 @@ class Collector:
     def start(self):
         self.values, self.end = [], time.monotonic() + self.seconds
 
-    def running(self):
-        return self.end is not None and time.monotonic() < self.end
-
     def finished(self):
         """True once, right after the window ends."""
         done = self.end is not None and time.monotonic() >= self.end
@@ -66,7 +63,7 @@ class Collector:
         return done
 
     def add(self, value):
-        if self.running():
+        if self.end is not None and time.monotonic() < self.end:
             self.values.append(value)
 
 
@@ -93,8 +90,9 @@ class Page(QWizardPage):
 
 class CameraPage(Page):
     def __init__(self, wizard):
-        super().__init__("Camera", "Pick the camera that faces you. The picture on the left should show your hand and the desk "
-                         "area above your keyboard. Rest your elbow on the desk and keep your hand low: it tires your arm far less.")
+        super().__init__("Camera", "Pick the camera that faces you. The picture on the left should show your raised hand. "
+                         "Rest your elbow on the desk or chair arm with your forearm upright: it tires your arm far less "
+                         "than holding it out. Your hand doesn't need to face the camera squarely.")
         self.combo = QComboBox()
         for i in range(wizard.settings.camera.count()):
             self.combo.addItem(wizard.settings.camera.itemText(i), wizard.settings.camera.itemData(i))
@@ -105,9 +103,10 @@ class CameraPage(Page):
 
 class AreaPage(Page):
     def __init__(self, wizard):
-        super().__init__("Cursor area", "Point at where the top-left corner of your screen should be, press the button, and hold "
-                         "still for 3 seconds. Then do the same for the bottom-right corner. Small, comfortable movements work best.")
-        self.wizard, self.points, self.collector, self.target = wizard, {}, Collector(), None
+        super().__init__("Cursor area", "Hold your open hand where the top-left corner of your screen should be, press the "
+                         "button, and hold still for 3 seconds. Then do the same for the bottom-right corner. "
+                         "Small, comfortable movements work best.")
+        self.points, self.collector, self.target = {}, Collector(), None
         self.button("Capture top-left", lambda: self.capture("tl"))
         self.button("Capture bottom-right", lambda: self.capture("br"))
         self.layout_.addWidget(self.note)
@@ -118,9 +117,9 @@ class AreaPage(Page):
         self.collector.start()
 
     def on_sample(self, wizard, hands):
-        hand = hands.get(wizard.app.cfg["hand"])
+        hand = role_hand(hands, wizard.app.cfg, "pointer")
         if hand:
-            self.collector.add(hand[1][5])
+            self.collector.add(hand["pos"])
         if not self.collector.finished():
             return
         if len(self.collector.values) < 10:
@@ -139,13 +138,13 @@ class AreaPage(Page):
             self.note.setText(f"Cursor area set to {box}.")
 
 
-class ThumbPage(Page):
+class PinchPage(Page):
     def __init__(self, wizard):
-        super().__init__("Thumb tap", "Clicking uses a thumb tap on the side of your index finger. Point with your index finger. "
-                         "First capture with your thumb held away from your finger, then with your thumb pressed against it.")
-        self.wizard, self.collectors, self.readings, self.which = wizard, {"out": Collector(), "pressed": Collector()}, {}, None
-        self.button("Capture: thumb away (3 s)", lambda: self.capture("out"))
-        self.button("Capture: thumb pressed on finger (3 s)", lambda: self.capture("pressed"))
+        super().__init__("Pinch", "Clicking is a pinch: thumb and index fingertips touching. First capture with your hand "
+                         "open and relaxed, then with thumb and index fingertip held together.")
+        self.collectors, self.readings, self.which = {"open": Collector(), "pinched": Collector()}, {}, None
+        self.button("Capture: hand open (3 s)", lambda: self.capture("open"))
+        self.button("Capture: pinching (3 s)", lambda: self.capture("pinched"))
         self.layout_.addWidget(self.note)
 
     def capture(self, which):
@@ -154,11 +153,10 @@ class ThumbPage(Page):
         self.collectors[which].start()
 
     def on_sample(self, wizard, hands):
-        app_cfg = wizard.app.cfg
-        label = app_cfg["hand"] if app_cfg["hand_mode"] == "single" else ("Left" if app_cfg["hand"] == "Right" else "Right")
-        if label in hands:
+        hand = role_hand(hands, wizard.app.cfg, "action")
+        if hand:
             for c in self.collectors.values():
-                c.add(tap_ratio(hands[label][1]))
+                c.add(hand["feat"]["pinch"])
         c = self.collectors.get(self.which)
         if not c or not c.finished():
             return
@@ -169,14 +167,13 @@ class ThumbPage(Page):
         if len(self.readings) < 2:
             self.note.setText("Got it. Now the other one.")
             return
-        threshold = tap_threshold(self.readings["out"], self.readings["pressed"])
+        threshold = pinch_threshold(self.readings["open"], self.readings["pinched"])
         if threshold is None:
-            wizard.cfg["mappings"] = use_pinch_instead(wizard.cfg["mappings"])
-            self.note.setText("Thumb taps can't be told apart on this camera view, so pinch (thumb to index fingertip) will click "
-                              "instead, and the tap gestures are switched off. You can change this in Settings.")
+            self.note.setText("Your open and pinching readings were too close to tell apart, so the standard setting is kept. "
+                              "Try again with your hand closer to the camera, or adjust it under Settings > Gesture tuning.")
         else:
-            wizard.cfg["tap_threshold"] = threshold
-            self.note.setText(f"Thumb tap calibrated (threshold {threshold}).")
+            wizard.cfg["pinch_threshold"] = threshold
+            self.note.setText(f"Pinch calibrated (threshold {threshold}).")
 
 
 class GesturePage(Page):
@@ -189,10 +186,11 @@ class GesturePage(Page):
             self.layout_.addWidget(label)
 
     def on_sample(self, wizard, hands):
-        for hand, (gesture, _) in hands.items():
-            self.run[hand] = self.run.get(hand, 0) + 1 if gesture == self.last.get(hand) else 1
-            self.last[hand] = gesture
-            if self.run[hand] >= 6 and gesture in self.labels:  # held for a few frames, not a one-frame glitch
+        for side, hand in hands.items():
+            gesture = hand["gesture"]
+            self.run[side] = self.run.get(side, 0) + 1 if gesture == self.last.get(side) else 1
+            self.last[side] = gesture
+            if self.run[side] >= 6 and gesture in self.labels:  # held for a few frames, not a one-frame glitch
                 self.labels[gesture].setText(f"✓ {self.text[gesture]}")
 
 
@@ -209,7 +207,7 @@ class Wizard(QWizard):
         self.app.tracker.enabled = False
         self.app.toggle_action.setChecked(False)
         self.app.sample_hook, self.app.frame_hook = self.on_sample, self.on_frame
-        for page in (CameraPage, AreaPage, ThumbPage, GesturePage):
+        for page in (CameraPage, AreaPage, PinchPage, GesturePage):
             self.addPage(page(self))
 
     def on_frame(self, image, text):
@@ -220,7 +218,7 @@ class Wizard(QWizard):
 
     def done(self, result):
         # Finish saves the results; Cancel keeps current settings. Either way the wizard doesn't open again by itself.
-        cfg = self.cfg if result else {**self.app.cfg, "wizard_done": True}
+        cfg = self.cfg if result else copy.deepcopy(self.app.cfg)
         cfg["wizard_done"] = True
         self.app.sample_hook = self.app.frame_hook = None
         self.app.calibrating = False

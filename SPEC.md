@@ -75,35 +75,36 @@ Dependencies: `mediapipe`, `opencv-python`, `PySide6`, `pynput`. Nothing else.
 ## Roadmap
 
 ### v2 (built on branch `v2/gestures`)
-- **Hand modes:** single-hand mode (as in v1) or two-hand mode with separate roles. The pointer hand only moves the cursor (point; fist = lift); the other hand does everything else, clicks included, so the pointer never moves to click and a thumb tap held on one hand while pointing with the other is a drag. A setting swaps which hand is the pointer. Roles are fixed per gesture (`POINTER_GESTURES` in `gestures.py`); per-gesture role editing is not built.
-- **Gestures:** an ergonomic set chosen from research (below).
+- **Hand modes:** single-hand mode follows whichever hand is in view. Two-hand mode splits roles: the pointer hand only moves the cursor, the other hand does everything else (clicks included). A setting swaps which hand is the pointer. Hands are told apart by position in the frame (`assign` in `gestures.py`), falling back to MediaPipe's left/right label only when there is nothing else to go on.
 - **Settings:** a Settings tab with sub-tabs (Hands, Cursor, Gesture tuning, General), using sliders for tuning values.
-- **First-run setup wizard** (`wizard.py`): camera, cursor area (point at two screen corners), thumb-tap calibration, and a live check of each gesture. Tracking is off while it runs. If thumb taps can't be told apart on the camera, the wizard switches clicking to pinch.
+- **First-run setup wizard** (`wizard.py`): camera, cursor area (hold the hand at two screen corners), pinch calibration, and a live check of each gesture. Tracking is off while it runs.
 
-#### v2 gesture set and why
+#### v2 detection design
 
-Research findings behind it:
-- Arm held out at shoulder height is the most tiring mid-air posture ([Consumed Endurance, CHI 2014](https://hci.cs.umanitoba.ca/publications/details/consumed-endurance-a-metric-to-quantify-arm-fatigue-of-mid-air-interactions)), so the hand stays low with the elbow on the desk.
-- Thumb-to-index-finger microgestures are low-effort, and the finger side facing the thumb is the least demanding ([Saarland thesis on single-handed gesture input](https://hci.cs.uni-saarland.de/wp-content/uploads/Theses/Bachelors/Bachelor-thesis-lena-hegemann.pdf)); clicking with the thumb also keeps the pointing finger still.
-- An open palm facing forward causes wrist dorsiflexion, a common ergonomic issue in mid-air studies ([Exploring Mid-Air Hand Interaction in Data Visualization](https://arxiv.org/pdf/2311.15372)), so no gesture uses a flat palm and an open hand is simply "nothing".
-- Guiard's asymmetric bimanual model: the dominant hand does fine pointing, the other hand coarse actions ([overview](https://a11y-paradise.onrender.com/glossary/69e17e182d4c4de6f084c00f)). Evidence on the non-dominant hand clicking is mixed, hence swappable roles.
-- Webcam air pointing reaches under 75% of mouse throughput, partly from poor click detection ([SFU](https://vvise.iat.sfu.ca/user/data/papers/inairpointing.pdf)), hence the wizard's calibration and the pinch fallback.
+The first v2 attempt (finger counting plus a thumb tap on the side of the index finger, read from 2D landmarks) failed in real use: the cursor stalled, clicks were missed, actions misfired and the hand was often dropped. It assumed a hand squarely facing the camera, and its click signal (thumb resting on the index finger or not) was too small a difference to read reliably. The rework follows these rules:
+
+- **Shape from 3D.** Pinch distance and finger curl come from MediaPipe's 3D world landmarks, normalized by hand size, so they hold when the hand is tilted or turned and for any camera position (`features`).
+- **Only strong signals.** Clicks are pinches (fingertips touching vs. apart is a large, unambiguous difference). Everything else is one of MediaPipe's own trained poses, accepted only above 0.6 confidence. No hand-rolled finger counting.
+- **The cursor needs no pose.** Any hand that isn't pinching, in a fist or making a trained pose moves the cursor, anchored to the palm centre, which barely moves when fingers pinch.
+- **Hysteresis.** A pinch starts under the threshold and ends only past 1.5x it; a fist has a similar margin. The pinching finger must not be curled, which separates a pinch from a fist.
+- **Timing.** Pinches switch after ~60 ms so clicks feel instant; other poses must be held for `hold_ms` (250 ms). While the hand is changing shape the cursor holds still, and a click is aimed at where the cursor was 100 ms before the fingers began to close.
+- **Dropout tolerance.** A hand missing for under 0.3 s changes nothing, so a tracking hiccup doesn't drop a drag. MediaPipe's detection, presence and tracking confidences are lowered from 0.5 to 0.3 so a turned hand is dropped less often.
 
 | Pose | Default action |
 |---|---|
-| Point (index finger out) | Move cursor |
-| Point + thumb tap on the side of the index finger | Left click; hold = drag |
-| Two fingers out (index + middle), move up/down | Scroll |
-| Two fingers + thumb tap | Right click |
-| Three fingers out (index, middle, ring), short wrist swipe left/right | Previous/next desktop |
-| Three fingers + thumb tap | Play/pause |
-| Thumbs up, raise/lower the hand | Volume up/down |
-| Fist | Nothing: freezes the cursor ("lift the mouse"), the clutch for relative mode |
-| Pinch, I-love-you | Unmapped; pinch is the fallback click |
+| Hand (anything else) | Move cursor |
+| Pinch (thumb + index) | Left click; hold = drag |
+| Pinch_Middle (thumb + middle) | Right click |
+| Closed_Fist, move up/down | Scroll |
+| Thumb_Up / Thumb_Down (held) | Volume up / down, repeating |
+| Victory | Play/pause |
+| ILoveYou | Task view |
 
-Rule of the set (the trackpad model): 1 finger moves and taps to click, 2 fingers scroll and tap to right-click, 3 fingers swipe to switch desktops and tap to play/pause.
+Removed from the first v2 attempt: thumb-tap and finger-count gestures, wrist-flick desktop switching (fast cursor moves set it off), the volume "slider" action, and relative cursor mode (it needed the fist as a clutch, which now scrolls).
 
-Also new: a relative ("trackpad") cursor mode as an option; absolute stays the default. Thumb tap's default threshold is untested on real cameras, so the wizard measures it per user and it's a slider in settings.
+Not yet verified on real hands: the 0.6 curl and pose-confidence limits, the 0.3 MediaPipe confidences, and the default pinch threshold are reasoned values. The wizard measures the pinch threshold per user; the Preview tab shows the live pinch number for manual tuning.
+
+Ergonomics notes that still apply: an arm held out at shoulder height is the most tiring mid-air posture ([Consumed Endurance, CHI 2014](https://hci.cs.umanitoba.ca/publications/details/consumed-endurance-a-metric-to-quantify-arm-fatigue-of-mid-air-interactions)), so rest the elbow ([elbow-anchored input](https://hci.cs.umanitoba.ca/publications/details/elbow-anchored-interaction-designing-restful-mid-air-input)); webcam air pointing reaches under 75% of mouse throughput, partly from click detection ([SFU](https://vvise.iat.sfu.ca/user/data/papers/inairpointing.pdf)).
 
 ### v3
 - **Windows installer** (.msi / Inno Setup) with a Start Menu entry.

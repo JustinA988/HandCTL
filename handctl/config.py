@@ -9,45 +9,36 @@ from pynput.keyboard import HotKey
 
 PATH = Path(os.environ.get("APPDATA", Path.home())) / "handctl" / "config.json"
 
-GESTURES = [
-    "Point", "Point_Tap", "Two_Finger", "Two_Finger_Tap", "Three_Finger_Tap", "Closed_Fist",
-    "Flick_Left", "Flick_Right", "Thumb_Up", "Pinch", "ILoveYou",
-]
-ACTION_TYPES = ["none", "mouse", "keys", "slider", "shell"]
+GESTURES = ["Hand", "Pinch", "Pinch_Middle", "Closed_Fist", "Thumb_Up", "Thumb_Down", "Victory", "ILoveYou"]
+ACTION_TYPES = ["none", "mouse", "keys", "shell"]
 MOUSE_VALUES = ["move", "left", "right", "scroll"]
 
 DEFAULTS = {
-    "version": 2,  # bump when gesture names change, so old mappings get reset instead of silently doing nothing
+    "version": 3,  # bump when gesture names change, so old mappings get reset instead of silently doing nothing
     "camera": 0,
-    "hand": "Right",  # the tracked hand; in two-hand mode the pointer hand (the other hand does the actions)
-    "hand_mode": "single",  # or "two"
+    "hand": "Right",  # two-hand mode only: the pointer hand (the other hand does the actions)
+    "hand_mode": "single",  # "single" follows whichever hand is in view; "two" splits pointing and actions
     "wizard_done": False,  # the first-run setup wizard opens until this is true
     "mirror": True,
     "toggle_hotkey": "<ctrl>+<alt>+g",
     "shell_enabled": False,
     "autostart": False,
-    "cursor_mode": "absolute",  # or "relative": hand movement nudges the cursor like a trackpad
-    "relative_speed": 1.5,  # relative mode: screens moved per cursor-area width of hand travel
-    "box": [0.2, 0.3, 0.8, 0.9],  # cursor area in the camera frame (left, top, right, bottom); low, so the hand can rest low
+    "box": [0.2, 0.2, 0.8, 0.8],  # cursor area in the camera frame: left, top, right, bottom (0-1)
     "min_cutoff": 5.0,  # steadiness: lower = less jitter when the hand is still
     "beta": 20.0,  # responsiveness: higher = less lag on fast moves
-    "pinch_threshold": 0.3,
-    "tap_threshold": 0.2,  # shortcut: untested guess for thumb-on-index distance; tune it once tested on a real camera
-    "hold_ms": 150,
+    "pinch_threshold": 0.3,  # thumb-to-fingertip distance in hand sizes; the setup wizard measures it per user
+    "hold_ms": 250,  # how long a pose (fist, thumbs, victory) must be held before it acts; pinches are faster
     "drag_ms": 300,
     "scroll_speed": 30,
     "mappings": {
-        "Point": {"type": "mouse", "value": "move"},
-        "Point_Tap": {"type": "mouse", "value": "left"},
-        "Two_Finger": {"type": "mouse", "value": "scroll"},
-        "Two_Finger_Tap": {"type": "mouse", "value": "right", "cooldown_ms": 500},
-        "Three_Finger_Tap": {"type": "keys", "value": "<media_play_pause>", "cooldown_ms": 1000},
-        "Closed_Fist": {"type": "none", "value": ""},  # clutch: freezes the cursor
-        "Flick_Left": {"type": "keys", "value": "<cmd>+<ctrl>+<left>", "cooldown_ms": 800},  # three-finger swipe
-        "Flick_Right": {"type": "keys", "value": "<cmd>+<ctrl>+<right>", "cooldown_ms": 800},
-        "Thumb_Up": {"type": "slider", "value": "<media_volume_up>,<media_volume_down>"},
-        "Pinch": {"type": "none", "value": ""},  # fallback click if thumb tap proves unreliable
-        "ILoveYou": {"type": "none", "value": ""},
+        "Hand": {"type": "mouse", "value": "move"},  # any open or relaxed hand
+        "Pinch": {"type": "mouse", "value": "left"},
+        "Pinch_Middle": {"type": "mouse", "value": "right", "cooldown_ms": 500},
+        "Closed_Fist": {"type": "mouse", "value": "scroll"},  # grab and move up/down
+        "Thumb_Up": {"type": "keys", "value": "<media_volume_up>", "cooldown_ms": 150, "repeat": True},
+        "Thumb_Down": {"type": "keys", "value": "<media_volume_down>", "cooldown_ms": 150, "repeat": True},
+        "Victory": {"type": "keys", "value": "<media_play_pause>", "cooldown_ms": 1500},
+        "ILoveYou": {"type": "keys", "value": "<cmd>+<tab>", "cooldown_ms": 1500},
     },
 }
 
@@ -68,6 +59,7 @@ def load(path=PATH):
     if data.get("version") != DEFAULTS["version"]:
         logging.warning("Settings from an older version: gesture mappings reset to the new defaults")
         data.pop("mappings", None)  # old gesture names no longer exist; other settings carry over
+        data.pop("wizard_done", None)  # what the wizard calibrates may have changed, so offer it once more
         data["version"] = DEFAULTS["version"]
     for key, value in data.items():
         default = DEFAULTS.get(key)
@@ -101,20 +93,12 @@ def validate(cfg):
     x0, y0, x1, y1 = cfg["box"]
     if not (0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1):
         errors.append("Cursor area: left/top must be smaller than right/bottom, all between 0 and 1.")
-    if cfg["cursor_mode"] not in ("absolute", "relative"):
-        errors.append("Cursor mode must be absolute or relative.")
     if cfg["hand_mode"] not in ("single", "two") or cfg["hand"] not in ("Right", "Left"):
         errors.append("Hand mode must be single or two, and the hand Right or Left.")
     combos = [("Toggle hotkey", cfg["toggle_hotkey"])]
     for name, m in cfg["mappings"].items():
         if m["type"] == "keys":
             combos.append((name, m["value"]))
-        elif m["type"] == "slider":
-            parts = m["value"].split(",")
-            if len(parts) != 2:
-                errors.append(f"{name}: slider needs two key combos separated by a comma (up,down).")
-            else:
-                combos += [(name, p.strip()) for p in parts]
         elif m["type"] == "mouse" and m["value"] not in MOUSE_VALUES:
             errors.append(f"{name}: mouse action must be one of {', '.join(MOUSE_VALUES)}.")
         elif m["type"] == "shell" and not m["value"].strip():

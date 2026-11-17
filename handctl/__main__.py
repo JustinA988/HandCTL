@@ -21,10 +21,10 @@ from .wizard import Wizard
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 HANDS_HELP = (
-    "Single: one hand does everything.\n"
-    "Two: the pointer hand only moves the cursor (point to move, fist to lift it). The other hand does everything else: "
-    "thumb taps to click, two fingers to scroll, volume, desktops and media. Clicking with the other hand means the "
-    "pointer hand never has to move to click."
+    "Single: whichever hand is in view does everything.\n"
+    "Two: the pointer hand only moves the cursor, whatever shape it makes. The other hand does everything else: "
+    "pinch to click, fist to scroll, thumbs for volume, peace sign for play/pause. Clicking with the other hand "
+    "means the pointer never moves when you click."
 )
 
 
@@ -133,9 +133,8 @@ class Settings(QWidget):
         self.fields = {
             "hand_mode": combo(["single", "two"]), "hand": combo(["Right", "Left"]),
             "mirror": QCheckBox("Mirror camera image"),
-            "cursor_mode": combo(["absolute", "relative"]), "relative_speed": Slider(0.2, 10, 0.1, 1),
             "min_cutoff": Slider(0.1, 5, 0.1, 1), "beta": Slider(0, 20, 0.5, 1),
-            "tap_threshold": Slider(0.05, 1, 0.01, 2), "pinch_threshold": Slider(0.05, 1, 0.05, 2),
+            "pinch_threshold": Slider(0.05, 1, 0.01, 2),
             "hold_ms": Slider(0, 1000, 10, 0), "drag_ms": Slider(0, 1500, 10, 0), "scroll_speed": Slider(1, 200, 1, 0),
             "toggle_hotkey": QLineEdit(),
             "shell_enabled": QCheckBox("Allow gestures to run shell commands"),
@@ -183,7 +182,6 @@ class Settings(QWidget):
         g.addWidget(self.table)
         help_text = QLabel(
             "Action values - mouse: move, left, right, scroll | keys: <ctrl>+<alt>+t, <cmd>+d, <media_next> | "
-            "slider (raise/lower the hand): <up combo>,<down combo> | "
             "shell: any command (only runs if enabled under Settings > General).")
         help_text.setWordWrap(True)
         g.addWidget(help_text)
@@ -193,16 +191,16 @@ class Settings(QWidget):
         wizard = QPushButton("Run setup wizard")
         wizard.clicked.connect(lambda: self.app.run_wizard())
         sub = QTabWidget()
-        sub.addTab(form(("Hand mode", f["hand_mode"]), ("Pointer hand", f["hand"]), f["mirror"], HANDS_HELP), "Hands")
+        sub.addTab(form(("Hand mode", f["hand_mode"]), ("Pointer hand (two-hand mode)", f["hand"]), f["mirror"], HANDS_HELP), "Hands")
         sub.addTab(form(
-            ("Cursor mode", f["cursor_mode"]), ("Relative speed", f["relative_speed"]),
             ("Steadiness (lower = steadier)", f["min_cutoff"]), ("Responsiveness (higher = less lag)", f["beta"]),
             ("Cursor area left", self.box[0]), ("top", self.box[1]), ("right", self.box[2]), ("bottom", self.box[3]),
         ), "Cursor")
         sub.addTab(form(
-            ("Thumb tap threshold", f["tap_threshold"]), ("Pinch threshold", f["pinch_threshold"]),
-            ("Hold before firing (ms)", f["hold_ms"]), ("Hold before drag (ms)", f["drag_ms"]), ("Scroll speed", f["scroll_speed"]),
-            "Raise a threshold if the gesture doesn't trigger; lower it if it triggers by accident.",
+            ("Pinch threshold", f["pinch_threshold"]), ("Pose hold before acting (ms)", f["hold_ms"]),
+            ("Pinch hold before drag (ms)", f["drag_ms"]), ("Scroll speed", f["scroll_speed"]),
+            "The Preview tab shows a live pinch number: it is small when thumb and finger touch. Set the pinch threshold "
+            "between your touching and open values: raise it if pinches don't click, lower it if clicks fire by accident.",
         ), "Gesture tuning")
         sub.addTab(form(("Toggle hotkey", f["toggle_hotkey"]), f["shell_enabled"], f["autostart"], wizard), "General")
 

@@ -4,47 +4,50 @@ import types
 import pytest
 
 from handctl import config, wizard
-from handctl.tracker import Tracker
+from handctl.tracker import ANY, Tracker
 
-from test_gestures import cfg, hand
+from test_gestures import cfg, world
 
 
 # --- tracker: reading one or two hands ---------------------------------------------------------------------------
 
 def fake_result(*hands):
-    """hands: (label, canned gesture, landmarks)."""
-    pts = lambda lm: [types.SimpleNamespace(x=x, y=y) for x, y in lm]
-    return types.SimpleNamespace(
-        hand_landmarks=[pts(lm) for _, _, lm in hands],
-        handedness=[[types.SimpleNamespace(category_name=label)] for label, _, _ in hands],
-        gestures=[[types.SimpleNamespace(category_name=g)] for _, g, _ in hands])
+    """hands: (MediaPipe label, canned gesture, x position, 3D landmarks)."""
+    ns = types.SimpleNamespace
+    return ns(
+        hand_landmarks=[[ns(x=x, y=0.5)] * 21 for _, _, x, _ in hands],
+        hand_world_landmarks=[[ns(x=p[0], y=p[1], z=p[2]) for p in w] for _, _, _, w in hands],
+        handedness=[[ns(category_name=label)] for label, _, _, _ in hands],
+        gestures=[[ns(category_name=g, score=0.9)] for _, g, _, _ in hands])
 
 
-def test_single_hand_mode_reads_only_the_chosen_hand(qapp):
-    t = Tracker(cfg(hand="Right"))
-    got = t._read(fake_result(("Left", "None", hand("im")), ("Right", "None", hand("i"))))
-    assert list(got) == ["Right"] and got["Right"][0] == "Point"
+def test_single_hand_mode_follows_whichever_hand_shows_up(qapp):
+    for label in ("Left", "Right"):  # MediaPipe's left/right label doesn't matter, so a flipped label can't lose the hand
+        t = Tracker(cfg())
+        got = t._read(fake_result((label, "None", 0.4, world(thumb="index"))), 0.0)
+        assert list(got) == [ANY] and got[ANY]["gesture"] == "Pinch" and got[ANY]["pos"] == pytest.approx((0.4, 0.5))
 
 
-def test_two_hand_mode_reads_both_hands_with_roles(qapp):
+def test_two_hand_mode_assigns_roles_by_position(qapp):
     t = Tracker(cfg(hand="Right", hand_mode="two"))
     assert {k: e.role for k, e in t.engines.items()} == {"Right": "pointer", "Left": "action"}
-    got = t._read(fake_result(("Left", "None", hand("i", "tap")), ("Right", "None", hand("i"))))
-    assert {k: v[0] for k, v in got.items()} == {"Left": "Point_Tap", "Right": "Point"}
+    # both mislabelled "Right": the one on the left of the mirrored image is still the left hand
+    got = t._read(fake_result(("Right", "None", 0.7, world()), ("Right", "None", 0.3, world(thumb="index"))), 0.0)
+    assert {k: v["gesture"] for k, v in got.items()} == {"Left": "Pinch", "Right": "Hand"}
     swapped = Tracker(cfg(hand="Left", hand_mode="two"))
     assert {k: e.role for k, e in swapped.engines.items()} == {"Left": "pointer", "Right": "action"}
 
 
-def test_unmirrored_camera_swaps_hand_labels(qapp):
-    t = Tracker(cfg(hand="Right", mirror=False))
-    assert list(t._read(fake_result(("Left", "None", hand("i"))))) == ["Right"]
+def test_no_hand_in_view(qapp):
+    assert Tracker(cfg())._read(fake_result(), 0.0) == {}
 
 
 # --- wizard: calibration math ------------------------------------------------------------------------------------
 
-def test_tap_threshold_sits_between_pressed_and_out_readings():
-    assert wizard.tap_threshold([0.6, 0.7, 0.65] * 10, [0.05, 0.08, 0.06] * 10) == pytest.approx(0.35, abs=0.05)
-    assert wizard.tap_threshold([0.2, 0.25, 0.3] * 10, [0.18, 0.2, 0.22] * 10) is None  # overlap: can't tell taps apart
+def test_pinch_threshold_sits_between_pinched_and_open_readings():
+    threshold = wizard.pinch_threshold([0.6, 0.7, 0.65] * 10, [0.12, 0.18, 0.15] * 10)
+    assert 0.18 < threshold and threshold * 1.5 <= 0.6  # above a real pinch; an open hand clearly ends it
+    assert wizard.pinch_threshold([0.3, 0.32, 0.35] * 10, [0.25, 0.28, 0.3] * 10) is None  # overlap: can't tell apart
 
 
 def test_box_from_two_corners():
@@ -53,31 +56,34 @@ def test_box_from_two_corners():
     assert wizard.box_from((0.7, 0.35), (0.3, 0.8)) is None  # bottom-right was left of top-left
 
 
-def test_pinch_fallback_replaces_the_tap_clicks():
-    m = wizard.use_pinch_instead(config.DEFAULTS["mappings"])
-    assert m["Pinch"] == {"type": "mouse", "value": "left"}
-    assert all(m[n]["type"] == "none" for n in ("Point_Tap", "Two_Finger_Tap", "Three_Finger_Tap"))
-    assert config.DEFAULTS["mappings"]["Point_Tap"]["type"] == "mouse"  # the defaults themselves are untouched
-    assert config.validate({**cfg(), "mappings": m}) == []
+def test_role_hand_picks_the_right_hand_for_each_job():
+    hands = {"Left": "L", "Right": "R"}
+    two = cfg(hand_mode="two", hand="Right")
+    assert wizard.role_hand(hands, two, "pointer") == "R" and wizard.role_hand(hands, two, "action") == "L"
+    assert wizard.role_hand({ANY: "H"}, cfg(), "pointer") == wizard.role_hand({ANY: "H"}, cfg(), "action") == "H"
+    assert wizard.role_hand({}, cfg(), "pointer") is None
 
 
 # --- wizard flow, driven with fake samples -----------------------------------------------------------------------
+
+def sample(gesture="Hand", pos=(0.5, 0.5), pinch=0.8):
+    return {ANY: {"gesture": gesture, "pos": pos, "feat": {"pinch": pinch}}}
+
 
 @pytest.fixture
 def quick_wizard(fake_app, monkeypatch):
     import handctl.__main__ as main
     original = wizard.Collector
     monkeypatch.setattr(wizard, "Collector", lambda: original(0.05))  # 3-second captures would make the test slow
-    w = wizard.Wizard(main.Settings(fake_app))
-    return w, fake_app
+    return wizard.Wizard(main.Settings(fake_app)), fake_app
 
 
-def capture(page, wizard_, hands_list):
+def capture(page, wizard_, hands, n=12):
     """Feed samples during a capture window, then one more after it ends."""
-    for hands in hands_list:
+    for _ in range(n):
         page.on_sample(wizard_, hands)
     time.sleep(0.08)
-    page.on_sample(wizard_, hands_list[-1])
+    page.on_sample(wizard_, hands)
 
 
 def test_wizard_tracking_is_off_while_it_runs(quick_wizard):
@@ -85,46 +91,60 @@ def test_wizard_tracking_is_off_while_it_runs(quick_wizard):
     assert app.calibrating and app.tracker.enabled is False
 
 
-def test_wizard_sets_cursor_area_and_calibrates_thumb_tap(quick_wizard):
+def test_wizard_sets_cursor_area_and_calibrates_pinch(quick_wizard):
     w, app = quick_wizard
-    area, thumb = w.page(1), w.page(2)
-    corner = lambda x, y: {"Right": ("Point", [(x, y)] * 21)}
+    area, pinch = w.page(1), w.page(2)
     area.capture("tl")
-    capture(area, w, [corner(0.3, 0.35)] * 12)
+    capture(area, w, sample(pos=(0.3, 0.35)))
     area.capture("br")
-    capture(area, w, [corner(0.7, 0.8)] * 12)
+    capture(area, w, sample(pos=(0.7, 0.8)))
     assert w.cfg["box"] == [0.3, 0.35, 0.7, 0.8]
 
-    thumb.capture("out")
-    capture(thumb, w, [{"Right": ("Point", hand("i", "out"))}] * 12)
-    thumb.capture("pressed")
-    capture(thumb, w, [{"Right": ("Point_Tap", hand("i", "tap"))}] * 12)
-    assert 0.05 < w.cfg["tap_threshold"] < 0.67 and w.cfg["mappings"]["Point_Tap"]["type"] == "mouse"
+    pinch.capture("open")
+    capture(pinch, w, sample(pinch=0.7))
+    pinch.capture("pinched")
+    capture(pinch, w, sample("Pinch", pinch=0.15))
+    assert 0.17 < w.cfg["pinch_threshold"] < 0.47
 
 
-def test_wizard_falls_back_to_pinch_when_taps_cannot_be_told_apart(quick_wizard):
+def test_wizard_keeps_the_default_when_pinch_readings_overlap(quick_wizard):
     w, _ = quick_wizard
-    thumb = w.page(2)
-    thumb.capture("out")
-    capture(thumb, w, [{"Right": ("Point", hand("i", "tap"))}] * 12)  # "out" reading looks pressed too
-    thumb.capture("pressed")
-    capture(thumb, w, [{"Right": ("Point_Tap", hand("i", "tap"))}] * 12)
-    assert w.cfg["mappings"]["Pinch"]["value"] == "left" and w.cfg["mappings"]["Point_Tap"]["type"] == "none"
+    page = w.page(2)
+    page.capture("open")
+    capture(page, w, sample(pinch=0.3))
+    page.capture("pinched")
+    capture(page, w, sample(pinch=0.28))
+    assert w.cfg["pinch_threshold"] == config.DEFAULTS["pinch_threshold"] and "too close" in page.note.text()
+
+
+def test_wizard_says_so_when_no_hand_was_seen(quick_wizard):
+    w, _ = quick_wizard
+    page = w.page(1)
+    page.capture("tl")
+    capture(page, w, {})
+    assert "couldn't see" in page.note.text() and w.cfg["box"] == config.DEFAULTS["box"]
 
 
 def test_wizard_gesture_check_needs_a_held_pose(quick_wizard):
     w, _ = quick_wizard
     page = w.page(3)
-    page.on_sample(w, {"Right": ("Point", hand("i"))})
-    assert page.labels["Point"].text().startswith("○")  # one frame is not enough
+    page.on_sample(w, sample("Pinch"))
+    assert page.labels["Pinch"].text().startswith("○")  # one frame is not enough
     for _ in range(6):
-        page.on_sample(w, {"Right": ("Point", hand("i"))})
-    assert page.labels["Point"].text().startswith("✓")
+        page.on_sample(w, sample("Pinch"))
+    assert page.labels["Pinch"].text().startswith("✓")
 
 
-def test_wizard_finish_saves_and_cancel_keeps_settings(quick_wizard):
+def test_wizard_finish_saves_and_turns_tracking_back_on(quick_wizard):
     w, app = quick_wizard
     w.cfg["box"] = [0.25, 0.3, 0.75, 0.85]
     w.done(1)
     assert app.saved[-1]["box"] == [0.25, 0.3, 0.75, 0.85] and app.saved[-1]["wizard_done"] is True
     assert app.applied[-1]["wizard_done"] is True and app.calibrating is False and app.sample_hook is None
+
+
+def test_wizard_cancel_keeps_settings(quick_wizard):
+    w, app = quick_wizard
+    w.cfg["box"] = [0.25, 0.3, 0.75, 0.85]
+    w.done(0)
+    assert app.saved[-1]["box"] == config.DEFAULTS["box"] and app.saved[-1]["wizard_done"] is True
