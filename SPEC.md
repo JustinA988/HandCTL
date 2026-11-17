@@ -72,8 +72,17 @@ Dependencies: `mediapipe`, `opencv-python`, `PySide6`, `pynput`. Nothing else.
 - Shell commands run detached without a console window and are not waited on (a timeout would kill launched apps); launch failures show a tray notification.
 - MediaPipe 1.x no longer bundles models or the legacy `mp.solutions` API; the app uses the Tasks `GestureRecognizer`.
 
-## Deferred (not in v1)
+## Roadmap
 
-- **v2 (planned, details TBD):** two-hand use (right hand, left hand, or both combined); more ergonomic hand signs; more user-friendly controls.
-- **v3+ (pushed back from the original v2):** monitor switching by head direction, adding eye gaze only if head direction proves too imprecise; optional second camera; camera position setting (above/below monitor); recording custom poses in settings.
-- **Later:** wake-gesture / hold-to-act activation, voice commands, gesture profile import/export, installer (.msi / Inno Setup), macOS then Linux.
+### v2
+- **Hand modes:** single-hand mode (as in v1) or two-hand mode with separate roles: one hand moves the cursor, the other triggers clicks and actions. A setting swaps which hand does which.
+- **New gestures:** replace the gesture set with ergonomic signs chosen from a short research pass (comfort, low arm fatigue, reliable detection). Pinch click and drag is the first to replace. New signs get approved before they are built.
+- **Settings:** a dedicated Settings tab with sub-tabs, using sliders for tuning values.
+- **First-run calibration wizard:** camera choice, cursor area, and a quick test of each gesture.
+
+### v3
+- **Windows installer** (.msi / Inno Setup) with a Start Menu entry.
+- **Monitor switching** by head and eye direction, with a camera position setting (above/below monitor).
+
+### v4
+- Recording custom poses in settings, optional second camera, voice commands, gesture profile import/export, wake-gesture / hold-to-act activation, macOS then Linux.

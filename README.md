@@ -71,9 +71,13 @@ Settings are stored in `%APPDATA%\handctl\config.json`. If that file is unreadab
 
 v1 is an early release: the gestures and defaults are not final.
 
-**v2 (planned, still being scoped):** two-hand use (right hand, left hand, or both combined), more ergonomic hand signs, and more user-friendly controls.
+**v2:** single-hand or two-hand mode (one hand moves the cursor, the other triggers actions, with a setting to swap them), new ergonomic gestures replacing the current set, a Settings tab with sub-tabs and sliders, and a first-run calibration wizard.
 
-**v3 and later (pushed back from the original v2):** monitor switching by head direction (plus eye gaze if needed, optional second camera), recording custom poses, voice commands, gesture profile import/export, an installer, macOS then Linux.
+**v3:** a Windows installer, and monitor switching by head and eye direction.
+
+**v4:** recording custom poses, an optional second camera, voice commands, gesture profile import/export, macOS then Linux.
+
+Full details are in [SPEC.md](SPEC.md).
 
 ## License
 
