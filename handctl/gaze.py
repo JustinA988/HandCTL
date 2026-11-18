@@ -81,9 +81,10 @@ class Selector:
     MARGIN = 0.75
     DWELL = 0.4
 
-    def __init__(self, points, current=None, dwell=DWELL, margin=MARGIN):
-        """points: {monitor: (yaw, pitch)} from calibrate(); current: the monitor in use now, if known."""
-        self.points, self.current, self.dwell, self.margin = points, current, dwell, margin
+    def __init__(self, points, current=None, dwell=DWELL, margin=MARGIN, ignore=()):
+        """points: {monitor: (yaw, pitch)} from calibrate(); current: the monitor in use now, if known;
+        ignore: (yaw, pitch) of places that aren't monitors (the keyboard): looking nearer one of them never switches."""
+        self.points, self.current, self.dwell, self.margin, self.ignore = points, current, dwell, margin, ignore
         self.candidate, self.since = None, 0.0
         self.recent = deque(maxlen=3)
 
@@ -97,6 +98,9 @@ class Selector:
         look = tuple(statistics.median(axis) for axis in zip(*self.recent))
         dist = {name: math.dist(look, point) for name, point in self.points.items()}
         best = min(dist, key=dist.get)
+        if any(math.dist(look, spot) < dist[best] for spot in self.ignore):
+            self.candidate = None  # looking at the keyboard or another place to ignore: stay
+            return self.current
         if self.current not in dist:
             self.current = best  # nothing to switch away from yet
         if best == self.current or dist[best] > self.margin * dist[self.current]:

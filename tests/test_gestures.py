@@ -338,6 +338,29 @@ def test_action_mode_pinch_and_move_swipes_instead_of_taking_a_screenshot():
     assert runs(run(Engine(actions_cfg()), wobble + hold("Hand", 0.7, 1.0))) == ["<cmd>+<shift>+s"]
 
 
+def test_a_quick_swipe_counts_from_when_the_fingers_closed_and_fires_once():
+    fast = [(i * 0.033, "Pinch", (0.5 + i * 0.03, 0.5)) for i in range(8)]  # most of it before the pinch is confirmed
+    assert runs(run(Engine(actions_cfg()), fast + hold("Hand", 0.27, 0.6, (0.71, 0.5)))) == ["<ctrl>+<tab>"]
+    long = pinch_moving(0, (0.3, 0.5), (0.8, 0.5), steps=30)  # a long swipe is still one tab, like a touchpad swipe
+    assert runs(run(Engine(actions_cfg()), long + hold("Hand", 1.4, 1.7, (0.8, 0.5)))) == ["<ctrl>+<tab>"]
+
+
+def test_a_mode_that_starts_during_the_pinch_still_counts():
+    e = Engine(actions_cfg())
+    run(e, hold("Pinch", 0, 0.3))  # pinching before the other hand's fist is confirmed
+    e.mode = "Edit"
+    run(e, hold("Pinch", 0.3, 0.5))
+    e.mode = None  # and the other hand drops first
+    assert runs(run(e, hold("Hand", 0.5, 0.8))) == ["<ctrl>+c"]
+
+
+def test_peace_and_i_love_you_are_read_from_the_finger_shape_too():
+    c = Classifier(cfg())
+    assert c("None", 0.0, world(curl="rp"))[0] == "Victory"  # MediaPipe unsure (a turned hand), the shape is clear
+    assert Classifier(cfg())("None", 0.0, world(curl="mr"))[0] == "ILoveYou"
+    assert Classifier(cfg())("None", 0.0, world())[0] == "Hand"  # an open hand is neither
+
+
 def test_action_mode_point_and_move_scrolls():
     e = Engine(actions_cfg())
     events = run(e, [(i * 0.033, "Point", (0.5, 0.7 - i * 0.01)) for i in range(40)])  # finger up, hand moving up
@@ -533,6 +556,10 @@ def test_version_4_action_only_defaults_move_to_the_new_ones_but_user_changes_st
     assert loaded["mappings"]["A:Thumb_Down"] == mine
     p.write_text(json.dumps({"version": 4, "action_hold_ms": 400}))
     assert config.load(p)["action_hold_ms"] == 400
+    p.write_text(json.dumps({"version": 6, "monitor_dwell_ms": 400}))  # 3.4's switch delay moves to the quicker default
+    assert config.load(p)["monitor_dwell_ms"] == config.DEFAULTS["monitor_dwell_ms"] == 250
+    p.write_text(json.dumps({"version": 6, "monitor_dwell_ms": 600}))
+    assert config.load(p)["monitor_dwell_ms"] == 600
 
 
 def test_every_default_key_combo_is_valid_and_dangerous_ones_have_cooldowns():

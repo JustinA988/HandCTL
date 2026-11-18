@@ -105,7 +105,7 @@ _OLD_ACTION = {
 }
 
 DEFAULTS = {
-    "version": 6,  # bump when mapping names change; load() then adds the new defaults (and resets very old settings)
+    "version": 7,  # bump when mapping names change; load() then adds the new defaults (and resets very old settings)
     "camera": 0,
     "hand": "Right",  # with both hands in view, this one moves the cursor and the other one picks the mode
     "control_mode": "actions",  # "actions": gestures only trigger actions; "cursor" (optional): the hand moves the cursor
@@ -128,7 +128,9 @@ DEFAULTS = {
     "gaze_source": "eyes",  # "eyes": head turn plus eye direction; "head": head turn only (steadier, no eye tracking)
     "monitor_head": {},  # like monitor_gaze, calibrated with gaze_source "head"
     "monitor_focus": True,  # on a switch, bring that monitor's window to the front and put the cursor in its middle
-    "monitor_dwell_ms": 400,  # how long a look must last before the monitor switches
+    "monitor_dwell_ms": 250,  # how long a look must last before the monitor switches
+    "ignore_gaze": [],  # [yaw, pitch] of places looked at that aren't monitors (the keyboard...): looking there never switches
+    "ignore_head": [],  # the same for gaze_source "head"
     "monitor_margin": 0.75,  # how much nearer the new monitor must look than the current one (lower = steadier)
     "modes": {"Edit": "Closed_Fist", "Media": "Thumb_Up", "Windows": "Victory", "Browser": "ILoveYou", "System": "Thumb_Down"},
     "mappings": MAPPINGS,
@@ -154,6 +156,8 @@ def load(path=PATH):
         data.pop("mappings", None)  # version 2 and earlier used other gesture names
         data.pop("wizard_done", None)  # what the wizard calibrates changed, so offer it once more
     # version 3 -> 4 only added mappings and modes: the user's own mappings stay, and the new ones are filled in below
+    if version == 6 and data.get("monitor_dwell_ms") == 400:  # 3.4's switch delay, left as it came: take the quicker one
+        data.pop("monitor_dwell_ms")
     if version in (4, 5):  # action-mode defaults changed since; drop the old ones (left as they came) so the new ones apply
         if version == 4 and data.get("action_hold_ms") == 250:
             data.pop("action_hold_ms")
@@ -209,9 +213,10 @@ def _mode_errors(modes):
     return errors
 
 
-def gaze_key(cfg):
-    """Where the monitor calibration for the chosen gaze source is kept."""
-    return "monitor_head" if cfg["gaze_source"] == "head" else "monitor_gaze"
+def gaze_key(cfg, ignore=False):
+    """Where the monitor calibration (or, with ignore=True, the places to ignore) for the chosen gaze source is kept."""
+    head = cfg["gaze_source"] == "head"
+    return ("ignore_head" if head else "ignore_gaze") if ignore else ("monitor_head" if head else "monitor_gaze")
 
 
 def validate(cfg):
@@ -226,7 +231,9 @@ def validate(cfg):
         errors.append("Hand mode must be auto or one, and the pointer hand Right or Left.")
     errors += _mode_errors(cfg["modes"])
     if not all(isinstance(p, list) and len(p) == 2 and all(type(v) in (int, float) for v in p)
-               for key in ("monitor_gaze", "monitor_head") for p in cfg[key].values()):
+               for key in ("monitor_gaze", "monitor_head") for p in cfg[key].values()) or not all(
+            isinstance(p, list) and len(p) == 2 and all(type(v) in (int, float) for v in p)
+            for key in ("ignore_gaze", "ignore_head") for p in cfg[key]):
         errors.append("Monitor calibration data is damaged. Run the monitor calibration again.")
     if cfg["gaze_source"] not in ("eyes", "head"):
         errors.append("Monitor switching must follow eyes or head.")

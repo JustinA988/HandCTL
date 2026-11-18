@@ -44,6 +44,8 @@ MONITORS_HELP = (
     "With two or more monitors, the monitor you look at becomes the one you control. With 'bring its window to the front' "
     "on, its front window gets the keyboard (Windows puts you back in the text box you last used there) and the cursor "
     "goes to that window's middle. A switch waits until a gesture you are making is finished, so the two never fight.\n"
+    "Calibration ends with your keyboard, and 'Add a place to ignore' adds more (a phone, notes): looking at those never "
+    "switches monitors.\n"
     "Follow: eyes = head turns and eye movement; head = head turns only (steadier if your eyes are lost often; turn your "
     "head toward each monitor). Switch delay: how long a look must last. Switch threshold: lower = needs a clearer look.\n"
     "Calibration shows a window on each monitor in turn: look at each one for a few seconds. Your face has to stay "
@@ -235,9 +237,13 @@ class Settings(QWidget):
         self.monitor_note = QLabel()
         calibrate = QPushButton("Calibrate monitors")
         calibrate.clicked.connect(lambda: self.app.calibrate_monitors())
+        add_spot = QPushButton("Add a place to ignore")
+        add_spot.clicked.connect(lambda: self.app.calibrate_monitors(spot_only=True))
+        clear_spots = QPushButton("Clear places to ignore")
+        clear_spots.clicked.connect(lambda: self.app.clear_ignored())
         sub.addTab(form(f["monitor_switch"], ("Follow", f["gaze_source"]), f["monitor_focus"],
                         ("Switch delay (ms)", f["monitor_dwell_ms"]), ("Switch threshold", f["monitor_margin"]),
-                        self.monitor_note, calibrate, MONITORS_HELP), "Monitors")
+                        self.monitor_note, calibrate, add_spot, clear_spots, MONITORS_HELP), "Monitors")
         sub.addTab(form(("Toggle hotkey", f["toggle_hotkey"]), f["shell_enabled"], f["autostart"], wizard), "General")
 
         tabs = QTabWidget()
@@ -304,8 +310,9 @@ class Settings(QWidget):
             box.setCurrentText(cfg["modes"][mode])
         self.set_picker.setCurrentIndex(1 if cfg["control_mode"] == "actions" else 0)  # show the set that is in use
         eyes, head = len(cfg["monitor_gaze"]), len(cfg["monitor_head"])
-        self.monitor_note.setText(f"Calibrated monitors: {eyes} for eyes, {head} for head. "
-                                  + ("Calibrate again to use head." if head < 2 <= eyes else ""))
+        self.monitor_note.setText(f"Calibrated monitors: {eyes} for eyes, {head} for head. Places to ignore: "
+                                  f"{len(cfg[config.gaze_key(cfg, ignore=True)])}. "
+                                  + ("Calibrate again to use head and ignore your keyboard." if head < 2 <= eyes else ""))
         self.put_mappings(cfg["mappings"])
         self.unchanged = self.edits()
 
@@ -409,12 +416,18 @@ class App:
         self.show_settings()
         Wizard(self.settings).exec()
 
-    def calibrate_monitors(self):
+    def calibrate_monitors(self, spot_only=False):
         if len(actions.monitors()) < 2:
             QMessageBox.information(self.settings, "handctl", "Only one monitor is connected, so there is nothing to switch between.")
             return
         self.show_settings()
-        MonitorCalibration(self.settings).exec()
+        MonitorCalibration(self.settings, spot_only).exec()
+
+    def clear_ignored(self):
+        cfg = {**self.cfg, "ignore_gaze": [], "ignore_head": []}
+        config.save(cfg)
+        self.apply(cfg)
+        self.settings.load(cfg)
 
     def stop(self):
         if self.hotkey:

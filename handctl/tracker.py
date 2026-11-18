@@ -22,7 +22,7 @@ from .gestures import GRACE, Classifier, Engine, ModeSelector, anchor, assign, c
 MODEL = Path(__file__).parent / "models" / "gesture_recognizer.task"
 FACE_MODEL = MODEL.with_name("face_landmarker.task")
 ANY = "Hand"  # one-hand mode tracks whichever hand shows up
-LOOK_EVERY = 0.15  # seconds between face readings when choosing a monitor: plenty, and it keeps hand tracking fast
+LOOK_EVERY = 0.1  # seconds between face readings when choosing a monitor: quick switches, still leaves hand tracking fast
 FACE_EVERY = 0.3  # seconds between face readings when it is only there to drop phantom hands (a face moves slowly)
 FACE_KEEP = 1.0  # seconds a face box stays valid after the face was last seen
 PREVIEW_EVERY = 1 / 15  # the settings window needs 15 pictures a second, not every frame
@@ -175,7 +175,8 @@ class Tracker(QThread):
             return
         self.target = actions.monitor_at(*actions.mouse.position, rects)
         self.selector = Selector(points, self.target if self.target in points else None,
-                                 self.cfg["monitor_dwell_ms"] / 1000, self.cfg["monitor_margin"])
+                                 self.cfg["monitor_dwell_ms"] / 1000, self.cfg["monitor_margin"],
+                                 [tuple(p) for p in self.cfg[config.gaze_key(self.cfg, ignore=True)]])
         actions.look_at(self.target)
 
     def _look(self, t, face, frame):

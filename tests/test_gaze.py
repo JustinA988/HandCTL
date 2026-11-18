@@ -69,6 +69,12 @@ def test_selector_switches_only_on_a_sustained_clear_look():
     assert [s.update(t, (-19, 0)) for t in (5.0, 5.2, 5.45)] == ["B", "B", "A"]
 
 
+def test_looking_at_a_place_to_ignore_never_switches():
+    s = Selector({"A": (-20, 0), "B": (20, 0)}, "A", ignore=[(15, 30)])  # the keyboard sits below, nearer B than A
+    assert [s.update(t, (15, 28)) for t in (0.0, 0.2, 0.4, 0.6, 0.8)] == ["A"] * 5  # looking down at it: stays on A
+    assert [s.update(t, (19, 0)) for t in (1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6)][-1] == "B"  # looking at B still switches
+
+
 def test_selector_starts_on_the_first_monitor_seen_and_needs_two_to_choose():
     s = Selector({"A": (-20, 0), "B": (20, 0)})
     assert s.update(0.0, None) is None and s.update(0.1, (15, 0)) == "B"  # nothing to switch away from: no wait
@@ -129,7 +135,7 @@ def looking(head_yaw):
 
 
 FRAME = np.zeros((480, 640, 3), np.uint8)
-CALIBRATED = dict(monitor_switch=True, monitor_focus=False, monitor_gaze={"A": [-20.0, 0.0], "B": [20.0, 0.0]})
+CALIBRATED = dict(monitor_switch=True, monitor_focus=False, monitor_dwell_ms=400, monitor_gaze={"A": [-20.0, 0.0], "B": [20.0, 0.0]})
 
 
 def test_tracker_switches_monitor_when_the_user_looks_across(qapp, desk):
@@ -202,20 +208,25 @@ def calibration(fake_app, monkeypatch):
     monkeypatch.setattr(actions, "monitors", lambda: {"B": B, "A": A, "C": C})
     monkeypatch.setattr(wizard.MonitorCalibration, "READY", 0.03)
     monkeypatch.setattr(wizard.MonitorCalibration, "HOLD", 0.03)
-    dialog = wizard.MonitorCalibration(main.Settings(fake_app))
+    settings = main.Settings(fake_app)
+    dialog = wizard.MonitorCalibration(settings)
     assert fake_app.calibrating and fake_app.force_face and list(dialog.rects) == ["A", "B", "C"]  # left to right
 
-    def run(yaws):
-        """Walk through the monitors; yaws[i] is where the user looks for monitor i (None = face not visible)."""
+    def run(yaws, spot_only=False):
+        """Walk through the steps: each monitor, then the keyboard. yaws[i] is where the user looks for step i: a yaw (the
+        head turns about half as far), a full (yaw, pitch, head yaw) reading, or None (face not visible)."""
+        nonlocal dialog
+        if spot_only:
+            dialog = wizard.MonitorCalibration(settings, spot_only=True)
         dialog.next_monitor()
         for yaw in yaws:
             dialog.on_look((99.0, 0.0, 99.0))  # readings before recording starts must be ignored
             time.sleep(0.04)
             dialog.tick()  # get-ready time is over: recording
             for _ in range(10):
-                dialog.on_look(None if yaw is None else (yaw, 1.0, yaw / 2))  # the head turns about half as far
+                dialog.on_look(yaw if yaw is None or isinstance(yaw, tuple) else (yaw, 1.0, yaw / 2))
             time.sleep(0.04)
-            dialog.tick()  # recording is over: next monitor, or finish
+            dialog.tick()  # recording is over: next step, or finish
         return dialog
 
     return run, fake_app
@@ -223,10 +234,11 @@ def calibration(fake_app, monkeypatch):
 
 def test_monitor_calibration_saves_and_turns_switching_on(calibration):
     run, app = calibration
-    dialog = run([-30.0, 0.0, 30.0])
+    dialog = run([-30.0, 0.0, 30.0, (0.0, 30.0, 0.0)])  # the keyboard: looking down
     saved = app.saved[-1]
     assert saved["monitor_gaze"] == {"A": [-30.0, 1.0], "B": [0.0, 1.0], "C": [30.0, 1.0]} and saved["monitor_switch"] is True
     assert saved["monitor_head"] == {"A": [-15.0, 1.0], "B": [0.0, 1.0], "C": [15.0, 1.0]}  # head-only, from the same run
+    assert saved["ignore_gaze"] == [[0.0, 30.0]] and saved["ignore_head"] == [[0.0, 30.0]]
     assert config.validate(saved) == [] and "Monitor 1, Monitor 2, Monitor 3" in dialog.text.text()
     dialog.done(1)
     assert app.applied[-1] == saved and not app.calibrating and not app.force_face and app.look_hook is None
@@ -234,13 +246,30 @@ def test_monitor_calibration_saves_and_turns_switching_on(calibration):
 
 def test_monitor_calibration_keeps_the_monitors_it_could_see(calibration):
     run, app = calibration
-    dialog = run([-30.0, 0.0, None])  # face not visible while looking at the third monitor
+    dialog = run([-30.0, 0.0, None, (0.0, 30.0, 0.0)])  # face not visible while looking at the third monitor
     assert set(app.saved[-1]["monitor_gaze"]) == {"A", "B"} and "Monitor 3 was left out" in dialog.text.text()
+
+
+def test_a_keyboard_that_looks_like_a_monitor_is_left_out(calibration):
+    run, app = calibration
+    dialog = run([-30.0, 0.0, 30.0, (2.0, 1.0, 1.0)])  # the keyboard reads almost like monitor 2
+    assert app.saved[-1]["ignore_gaze"] == [] and "looked the same as Monitor 2" in dialog.text.text()
+    assert len(app.saved[-1]["monitor_gaze"]) == 3  # the monitors are kept
+
+
+def test_adding_a_place_to_ignore_keeps_everything_else(calibration):
+    run, app = calibration
+    app.cfg.update(monitor_switch=True, monitor_gaze={"A": [-30.0, 1.0], "B": [30.0, 1.0]},
+                   monitor_head={"A": [-15.0, 1.0], "B": [15.0, 1.0]}, ignore_gaze=[[0.0, 30.0]], ignore_head=[[0.0, 30.0]])
+    dialog = run([(-5.0, -25.0, -2.0)], spot_only=True)  # a phone held up to the left
+    saved = app.saved[-1]
+    assert saved["ignore_gaze"] == [[0.0, 30.0], [-5.0, -25.0]] and saved["ignore_head"] == [[0.0, 30.0], [-2.0, -25.0]]
+    assert saved["monitor_gaze"] == app.cfg["monitor_gaze"] and "won't switch" in dialog.text.text()
 
 
 def test_failed_monitor_calibration_changes_nothing(calibration):
     run, app = calibration
-    dialog = run([-30.0, None, None])
+    dialog = run([-30.0, None, None, None])
     assert app.saved == [] and "didn't work" in dialog.text.text()
     dialog.done(0)
     assert app.applied[-1] == app.cfg and app.applied[-1]["monitor_switch"] is False and not app.calibrating

@@ -7,10 +7,10 @@ import time
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QGuiApplication, QPixmap
-from PySide6.QtWidgets import QComboBox, QDialog, QLabel, QPushButton, QVBoxLayout, QWizard, QWizardPage
+from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QLabel, QPushButton, QVBoxLayout, QWizard, QWizardPage
 
 from . import actions, config
-from .gaze import calibrate
+from .gaze import MIN_APART, MIN_SAMPLES, calibrate
 
 CHECK = [  # (gesture, what to do)
     ("Hand", "Hold up an open, relaxed hand (this moves the cursor)"),
@@ -238,11 +238,15 @@ class Wizard(QWizard):
         super().done(result)
 
 
+SPOT = "spot"  # a place the user looks at that isn't a monitor (the keyboard...): looking there must never switch
+
+
 class MonitorCalibration(QDialog):
-    """Shows a window on each monitor in turn and records where the user's gaze points while they look at it."""
+    """Shows a window on each monitor in turn and records where the user's gaze points while they look at it, then
+    records the keyboard as a place to ignore. spot_only=True records one more place to ignore and changes nothing else."""
     READY, HOLD = 2.5, 2.5  # seconds to turn and look, then seconds recorded, per monitor
 
-    def __init__(self, settings):
+    def __init__(self, settings, spot_only=False):
         super().__init__(settings)
         self.settings, self.app = settings, settings.app
         self.setWindowTitle("handctl monitor calibration")
@@ -262,7 +266,9 @@ class MonitorCalibration(QDialog):
         layout.addWidget(self.close_button)
         self.rects = dict(sorted(actions.monitors().items(), key=lambda item: (item[1][0], item[1][1])))
         self.labels = {name: f"Monitor {i + 1}" for i, name in enumerate(self.rects)}  # numbered left to right
-        self.samples = {name: [] for name in self.rects}
+        self.spot_only = spot_only
+        self.steps = [SPOT] if spot_only else [*self.rects, SPOT]
+        self.samples = {name: [] for name in self.steps}
         self.index, self.recording, self.phase_end, self.saved = -1, False, 0.0, None
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.tick)
@@ -277,49 +283,91 @@ class MonitorCalibration(QDialog):
 
     def next_monitor(self):
         self.index += 1
-        if self.index >= len(self.rects):
+        if self.index >= len(self.steps):
             self.finish()
             return
         self.recording, self.phase_end = False, time.monotonic() + self.READY
-        if QGuiApplication.platformName() == "windows":
+        if self.steps[self.index] != SPOT and QGuiApplication.platformName() == "windows":
             # placed through Windows in real pixels: Qt's own coordinates differ from them on scaled displays
             left, top, width, height = list(self.rects.values())[self.index]
             ctypes.windll.user32.SetWindowPos(int(self.winId()), 0, left + width // 2 - 280, top + height // 2 - 140, 0, 0, 0x0015)
         self.tick()
 
     def tick(self):
-        if not 0 <= self.index < len(self.rects):
+        if not 0 <= self.index < len(self.steps):
             return
         left = self.phase_end - time.monotonic()
+        spot = self.steps[self.index] == SPOT
         if left <= 0 and self.recording:
+            if spot:
+                QApplication.beep()  # the user is looking away from the screen, so a sound says it's done
             self.next_monitor()
             return
         if left <= 0:
             self.recording, self.phase_end, left = True, time.monotonic() + self.HOLD, self.HOLD
-        if self.recording:
+        what = "the place to ignore (your phone, notes, a second keyboard...)" if self.spot_only else "your keyboard"
+        if spot:
+            self.text.setText(f"Keep looking at {what} until you hear a beep." if self.recording else
+                              f"{'Last step: l' if not self.spot_only else 'L'}ook at {what} and keep looking until you "
+                              f"hear a beep. Looking there will never switch monitors.\nRecording starts in {math.ceil(left)}")
+        elif self.recording:
             self.text.setText(f"Keep looking at this window...\n{math.ceil(left)}")
         else:
             label = list(self.labels.values())[self.index]
             self.text.setText(f"{label} of {len(self.rects)}: look at this window.\nRecording starts in {math.ceil(left)}")
 
     def on_look(self, seen):
-        if self.recording and seen and 0 <= self.index < len(self.rects):
-            self.samples[list(self.rects)[self.index]].append(seen)
+        if self.recording and seen and 0 <= self.index < len(self.steps):
+            self.samples[self.steps[self.index]].append(seen)
 
     def finish(self):
         self.timer.stop()
         self.recording = False
         # each reading holds both gaze sources, (yaw, pitch, head-only yaw), so both calibrations come from one run
-        both = {"monitor_gaze": calibrate(self.samples, self.labels.get),
-                "monitor_head": calibrate({n: [(s[2], s[1]) for s in looks] for n, looks in self.samples.items()}, self.labels.get)}
-        points, problems = both[config.gaze_key(self.app.cfg)]
-        if len(points) >= 2:
-            self.saved = copy.deepcopy(self.app.cfg)
-            for key, (found, _) in both.items():
-                self.saved[key] = {name: [round(v, 1) for v in point] for name, point in found.items()}
+        sources = {"eyes": lambda s: s[:2], "head": lambda s: (s[2], s[1])}
+        monitors = {n: looks for n, looks in self.samples.items() if n != SPOT}
+        spot_looks = self.samples[SPOT]
+        source = self.app.cfg["gaze_source"]
+        cfg = copy.deepcopy(self.app.cfg)
+        results = {}
+        for name, read in sources.items():
+            key_cfg = {**cfg, "gaze_source": name}
+            if self.spot_only:
+                points = {n: tuple(p) for n, p in cfg[config.gaze_key(key_cfg)].items()}
+                problems = []
+            else:
+                points, problems = calibrate({n: [read(s) for s in looks] for n, looks in monitors.items()}, self.labels.get)
+            spot = None
+            if len(spot_looks) >= MIN_SAMPLES:
+                spot = tuple(statistics.median(read(s)[i] for s in spot_looks) for i in (0, 1))
+                near = [n for n, p in points.items() if math.dist(p, spot) < MIN_APART]
+                if near:  # it would swallow looks at that monitor, so it is left out
+                    problems.append(f"The place to ignore looked the same as {self.labels.get(near[0], near[0])} to the camera, "
+                                    "so it was left out.")
+                    spot = None
+            elif not problems or self.spot_only:
+                problems.append("The place to ignore was left out: your face wasn't visible to the camera while you looked at it.")
+            results[name] = (points, spot, problems)
+        points, spot, problems = results[source]
+        if self.spot_only:
+            if spot:
+                self.saved = cfg
+                for name, (_, found, _) in results.items():
+                    if found:
+                        self.saved[config.gaze_key({**cfg, "gaze_source": name}, ignore=True)].append([round(v, 1) for v in found])
+                config.save(self.saved)
+                head = "Done. Looking at that place won't switch monitors."
+            else:
+                head = "That didn't work, so nothing was changed."
+        elif len(points) >= 2:
+            self.saved = cfg
+            for name, (found, found_spot, _) in results.items():
+                key_cfg = {**cfg, "gaze_source": name}
+                self.saved[config.gaze_key(key_cfg)] = {n: [round(v, 1) for v in p] for n, p in found.items()}
+                self.saved[config.gaze_key(key_cfg, ignore=True)] = [[round(v, 1) for v in found_spot]] if found_spot else []
             self.saved["monitor_switch"] = True
             config.save(self.saved)
-            head = f"Done. The cursor now follows your gaze between {', '.join(self.labels[name] for name in points)}."
+            head = f"Done. You now control the monitor you look at: {', '.join(self.labels[name] for name in points)}."
         else:
             head = "Calibration didn't work, so monitor switching was left as it was."
         self.text.setText("\n".join([head] + problems))

@@ -63,7 +63,7 @@ Gestures trigger actions; the hand never moves the cursor or clicks. Simple acti
 | Gesture | Action |
 |---|---|
 | Pinch thumb + index, then let go | Screenshot |
-| Pinch and move left / right | Previous / next tab (one per step; keep moving for more) |
+| Pinch and move left / right | Previous / next tab (one per swipe; pinch again for another) |
 | Pinch and move up | Task view |
 | Pinch and move down | Show desktop |
 | Point (index finger up, the others curled) and move up / down | Scroll |
@@ -72,7 +72,7 @@ Gestures trigger actions; the hand never moves the cursor or clicks. Simple acti
 | Peace sign | Play/pause |
 | "I love you" sign | Switch app |
 
-A pinch acts when you let go, and only if it didn't move: a pinch that moves is a swipe instead. The first step of a swipe picks its direction, so a sideways tab swipe that drifts downward won't also show the desktop.
+A pinch acts when you let go, and only if it didn't move: a pinch that moves is a swipe instead. A swipe counts from the moment your fingers close, so a quick flick works, and it fires once, in the direction you moved most. A mode the other hand starts while you pinch still counts. The peace sign and "I love you" are also read from the shape of your fingers, so they work with the hand turned.
 
 With both hands in view, the other hand picks a mode exactly as in cursor mode below (fist = Edit, thumbs up = Media, peace sign = Windows, "I love you" = Browser, thumbs down = System), for copy, paste, undo, close tab, lock screen and the rest; swipes and pointing keep their jobs in every mode. The Gestures tab keeps a separate set of gestures for each control mode (pick which to edit at the top), so changing one never changes the other.
 
@@ -162,7 +162,8 @@ With two or more monitors, open **Settings → Monitors → Calibrate monitors**
 - **Bring its window to the front** (on by default): the front window on that monitor gets the keyboard, so you can just start typing (Windows puts you back in the text box you last used in that window), and the cursor moves to that window's middle. On a monitor with no open window the cursor goes to the monitor's middle. With it off, the cursor keeps the same relative spot.
 - A switch waits until a gesture you are in the middle of is finished (a pinch, a swipe, a scroll, a held mode), so looking around while you gesture never pulls the cursor or keyboard away mid-gesture. Then it happens straight away.
 - **Follow: eyes** (head turns and eye movement) or **head** (head turns only). Head is steadier if eye tracking keeps losing you, but you have to turn your head toward each monitor. One calibration records both; a calibration from before version 3.4 only has eyes, so calibrate once more to use head.
-- **Switch delay** (default 400 ms): how long a look must last. **Switch threshold** (default 0.75): lower needs a clearer look before it switches. Each reading is also the middle of the last three, so a blink or one bad reading is ignored.
+- **Your keyboard and other places to ignore.** Calibration ends by asking you to look at your keyboard; looking there never switches monitors (or pulls the keyboard focus away). **Add a place to ignore** records another one (a phone, notes, a second keyboard); **Clear places to ignore** removes them. Calibrations from before 3.5 have none, so calibrate once more.
+- **Switch delay** (default 250 ms): how long a look must last. **Switch threshold** (default 0.75): lower needs a clearer look before it switches. Each reading is also the middle of the last three (the face is read ten times a second), so a blink or one bad reading is ignored.
 
 The camera has to see your face while you look at each monitor. A monitor you can only see by turning away from the camera is left out, and the calibration tells you so. Calibrate again after moving the camera or your monitors. Turn switching off with the checkbox on the same tab.
 

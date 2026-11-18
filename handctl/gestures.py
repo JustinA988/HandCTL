@@ -16,7 +16,7 @@ SLOW = {"Pinch_Ring": 0.2, "Pinch_Pinky": 0.25}  # seconds. Ring and pinky pinch
 QUICK_HOLD = 0.06  # seconds, about two frames
 GRACE = 0.3  # seconds a hand may vanish (tracking dropout) before it counts as gone
 LOOKBACK = 0.1  # seconds: a click lands where the cursor was before the closing fingers nudged the hand
-SWIPE = 0.12  # action mode: how far (in cursor-area widths/heights) a pinched hand moves for one swipe step
+SWIPE = 0.15  # action mode: how far (in cursor-area widths/heights) a pinched hand moves to swipe
 
 
 def cut_off(lm, limit=3):
@@ -57,15 +57,20 @@ class Classifier:
         mean = sum(f["ext"]) / 4
         # a finger curled into a fist can't be pinching, however close it sits to the thumb; holding a pinch is a bit more lenient
         near = {name: f[PINCHES[name]] for name, finger in PINCH_FINGER.items() if f["ext"][finger] >= CURLED - 0.1}
-        # its three curled fingers would read as a fist, so pointing is told apart by the straight index finger
-        pointing = f["ext"][0] >= CURLED + 0.1 and max(f["ext"][1:]) < CURLED
+        straight = [e >= CURLED + 0.1 for e in f["ext"]]
+        bent = [e < CURLED for e in f["ext"]]
+        # finger shapes from the 3D hand, for when MediaPipe's own score drops (a turned hand): index + middle up is a
+        # peace sign, index + pinky up is "I love you", the index alone is pointing (which would otherwise read as a fist)
+        shape = ("Victory" if straight[0] and straight[1] and bent[2] and bent[3]
+                 else "ILoveYou" if straight[0] and straight[3] and bent[1] and bent[2]
+                 else "Point" if straight[0] and all(bent[1:]) else None)
         if self.held in PINCHES:
             d = near.get(self.held)
             closer = min(near, key=near.get) if near else None
             # fingers must clearly part before a pinch ends, and it moves to another finger once that one is clearly closer
             if d is not None and d < enter * 1.5 and not (closer != self.held and near[closer] < enter and near[closer] < 0.8 * d):
                 return self.held, f
-        elif self.held == "Closed_Fist" and mean < FIST + 0.1 and not pointing and not (canned in POSES and score >= POSE_SCORE):
+        elif self.held == "Closed_Fist" and mean < FIST + 0.1 and not shape and not (canned in POSES and score >= POSE_SCORE):
             return self.held, f  # (a thumbs-up or peace sign also has curled fingers, so a clear pose ends the fist)
         self.held = None
         starts = {name: d for name, d in near.items() if d < enter and f["ext"][PINCH_FINGER[name]] >= CURLED}
@@ -73,8 +78,8 @@ class Classifier:
             self.held = min(starts, key=starts.get)
         elif canned in POSES and score >= POSE_SCORE:
             return canned, f
-        elif pointing:
-            return "Point", f
+        elif shape:
+            return shape, f
         elif mean < FIST or (canned == "Closed_Fist" and mean < FIST + 0.1):
             self.held = "Closed_Fist"
         return self.held or "Hand", f
@@ -170,7 +175,7 @@ class Engine:
         self.action = None  # (mapping name, mapping) chosen when the current pose started, so a mode change can't switch it mid-pose
         self.last_v = None
         self.step_acc = 0.0
-        self.swipe = None  # action mode, while pinching: [where the current step started, axis 0/1 or None, swiped yet]
+        self.swipe = None  # action mode, while pinching: [where the pinch started, swiped yet, mode held during it]
 
     def busy(self):
         """True while a gesture is under way: any pose but a resting hand or one that only moves the cursor."""
@@ -204,6 +209,8 @@ class Engine:
         self.trail.append((t, self.pos))
         while t - self.trail[0][0] > 1.0:
             self.trail.popleft()
+        if self.swipe is not None and self.mode:
+            self.swipe[2] = self.mode  # a mode held at any point during the pinch counts, even one that started a bit late
         if self.raw != self.current:
             return out  # while the hand is changing shape (fingers closing to pinch), everything holds still
         if self.swipe is not None:
@@ -224,11 +231,12 @@ class Engine:
             out += self._fire(name, act, t)
         return out
 
-    def _pick(self, pose):
-        """(name, mapping) for a pose: the current mode's version if it has one, else the plain one."""
+    def _pick(self, pose, mode=None):
+        """(name, mapping) for a pose: the mode's version (`mode`, else the current one) if it has one, else the plain one."""
         mappings = self.cfg["mappings"]
         prefix = "A:" if self.cfg["control_mode"] == "actions" else ""  # action-only mode never falls back to cursor mappings
-        names = [f"{prefix}{self.mode}/{pose}", prefix + pose] if self.mode else [prefix + pose]
+        mode = mode or self.mode
+        names = [f"{prefix}{mode}/{pose}", prefix + pose] if mode else [prefix + pose]
         for name in names:
             act = mappings.get(name)
             if act and act["type"] != "none":
@@ -238,7 +246,9 @@ class Engine:
     def _enter(self, t):
         self.action = self._pick(self.current)
         if self.cfg["control_mode"] == "actions" and self.current == "Pinch":
-            self.swipe = [None, None, False]
+            # measured from when the fingers closed: a quick swipe is mostly over before the pinch is confirmed
+            since = [p for seen, p in self.trail if seen >= self.since]
+            self.swipe = [since[0] if since else None, False, self.mode]
             return []  # a pinch acts when let go, and only if it didn't swipe
         if not self.action:
             return []
@@ -261,28 +271,28 @@ class Engine:
         return [("move", *past[-1])] if past else []
 
     def _swipe(self, t):
-        """Action mode pinch: moving one way fires Swipe_<direction>, once per SWIPE travelled. The first step picks the
-        axis and the rest of the pinch keeps to it, so a sideways tab swipe can't also go up or down."""
-        start, axis, _ = self.swipe
+        """Action mode pinch: moving SWIPE one way fires Swipe_<direction> (the way it moved most), once per pinch, like a
+        touchpad swipe; pinch again for another."""
+        start, swiped, mode = self.swipe
+        if swiped:
+            return []
         if start is None:
             self.swipe[0] = self.pos
             return []
-        moved = (self.pos[0] - start[0], self.pos[1] - start[1])
-        if axis is None:
-            if max(map(abs, moved)) < SWIPE:
-                return []
-            axis = self.swipe[1] = 0 if abs(moved[0]) >= abs(moved[1]) else 1
-        if abs(moved[axis]) < SWIPE:
+        dx, dy = self.pos[0] - start[0], self.pos[1] - start[1]
+        if max(abs(dx), abs(dy)) < SWIPE:
             return []
-        self.swipe[0], self.swipe[2] = self.pos, True
-        names = ("Swipe_Left", "Swipe_Right") if axis == 0 else ("Swipe_Up", "Swipe_Down")
-        picked = self._pick(names[moved[axis] > 0])
+        self.swipe[1] = True
+        name = ("Swipe_Right" if dx > 0 else "Swipe_Left") if abs(dx) >= abs(dy) else ("Swipe_Down" if dy > 0 else "Swipe_Up")
+        picked = self._pick(name, mode)
         return self._fire(*picked, t) if picked else []
 
     def _exit(self, t):
         if self.swipe is not None:
-            swiped, self.swipe = self.swipe[2], None
-            return [] if swiped or not self.action else self._fire(*self.action, t)
+            _, swiped, mode = self.swipe
+            self.swipe = None
+            picked = None if swiped else self._pick("Pinch", mode)  # the mode is read now, so a late mode hand still counts
+            return self._fire(*picked, t) if picked else []
         if self.down:
             self.down = False
             return [("release",)]

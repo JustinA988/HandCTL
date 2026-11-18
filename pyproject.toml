@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "handctl"
-version = "3.4.0"
+version = "3.5.0"
 description = "Control your PC with hand gestures from a webcam."
 readme = "README.md"
 license = "MIT"

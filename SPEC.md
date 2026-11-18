@@ -157,5 +157,14 @@ Measured on one user's camera (guided recording of 1,839 frames, replayed throug
 - Settings version 6: untouched 3.2/3.3 action thumb mappings are replaced by the new defaults.
 - Verified: unit tests (93), a replay of the recorded session in action mode (no actions with no hands, open hand, both open or near the face; no swipes from repeated in-place pinches; Point seen in 2 frames of the fist phase, too short to act), and bringing a window on another monitor to the front from a background process on the dev machine. Not verified live with hands or eyes.
 
+#### 3.5: gesture fixes, places to ignore, faster switching
+
+- Reported: pinch/swipes and peace / "I love you" / modes did nothing or the wrong thing; looking down at the keyboard switched monitors (and, with focus on, sent gestures to the wrong window).
+- Swipes are measured from when the raw pinch started (from the position trail), not from when the pinch was confirmed 0.15 s later: a quick flick was mostly over by then, fell short, and the release took a screenshot. One action per swipe (largest axis), `SWIPE` 0.15; stepping fired several tabs on one long swipe. The pinch's own action and a swipe use any mode held during the pinch, picked at release, so a mode hand that is a moment late still counts.
+- Peace sign and "I love you" also come from finger shape (index + middle straight, ring + pinky bent; index + pinky straight, middle + ring bent), alongside MediaPipe's label at >= 0.6, which drops on a turned hand. The replayed session shows no such shapes with open hands or near the face.
+- Places to ignore: calibration ends with a keyboard step (beep when done, since the user is looking away); "Add a place to ignore" records one more; stored per gaze source (`ignore_gaze`, `ignore_head`). The selector stays put whenever an ignore spot is nearer than the nearest monitor. A spot within `MIN_APART` of a monitor is left out with a message.
+- Faster: face read every 0.1 s (was 0.15), `monitor_dwell_ms` 250 (was 400; settings version 7 moves an untouched 400).
+- Not verified live.
+
 ### v4
 - Recording custom poses in settings, optional second camera, voice commands, gesture profile import/export, wake-gesture / hold-to-act activation, macOS then Linux.
