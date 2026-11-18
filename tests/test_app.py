@@ -89,8 +89,8 @@ def test_the_other_hand_picks_a_mode_and_the_main_hand_acts_in_it(qapp, quiet):
     now = frames(t, now, 0.4, right(thumb="index"), left(curl="imrp"))  # a pinch now copies instead of clicking
     assert combos(quiet) == ["<ctrl>+c"] and "press" not in [e[0] for e in quiet]
     quiet.clear()
-    now = frames(t, now, 0.4, right(thumb="ring"), left(curl="imrp"))  # ring finger pinch: find (a bonus slot)
-    assert combos(quiet) == ["<ctrl>+f"]
+    now = frames(t, now, 0.4, right(curl="rp"), left(curl="imrp"))  # peace sign: save
+    assert combos(quiet) == ["<ctrl>+s"]
     quiet.clear()
     now = frames(t, now, 0.4, right(curl="imrp"), left(curl="imrp"))  # fist with the main hand too: paste, not scroll
     assert combos(quiet) == ["<ctrl>+v"] and "scroll" not in [e[0] for e in quiet]
@@ -103,8 +103,8 @@ def test_the_other_hand_picks_a_mode_and_the_main_hand_acts_in_it(qapp, quiet):
 
 def test_each_mode_pose_selects_its_mode(qapp, quiet):
     t = Tracker(cfg(hand="Right"))
-    # poses that MediaPipe names (thumbs, peace sign, I-love-you) arrive as its own gesture label
-    named = {"Media": "Thumb_Up", "Windows": "Victory", "Browser": "ILoveYou", "System": "Thumb_Down"}
+    # poses that MediaPipe names (thumbs up, peace sign) arrive as its own gesture label
+    named = {"Media": "Thumb_Up", "Windows": "Victory"}
     now = 0.0
     for mode, canned in named.items():
         for i in range(12):

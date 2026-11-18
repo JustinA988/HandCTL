@@ -30,7 +30,7 @@ HANDS_HELP = (
     "Auto: both hands are tracked. With one hand in view, it does everything (the core gestures). With both in view, "
     "the main hand keeps moving the cursor and doing the core gestures, and the other hand picks a mode by holding a "
     "pose, like holding Shift: while it does, the main hand's pinches, thumbs and signs do that mode's actions "
-    "(Edit, Media, Windows, Browser, System). Let go and everything returns to normal.\n"
+    "(fist = Edit, thumbs up = Media, peace sign = Windows). Let go and everything returns to normal.\n"
     "One: only one hand is ever tracked, so a second hand in view (say, typing) is ignored.\n"
     "Choose each mode's pose below; each mode needs its own."
 )

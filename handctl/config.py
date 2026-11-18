@@ -12,7 +12,7 @@ PATH = Path(os.environ.get("APPDATA", Path.home())) / "handctl" / "config.json"
 POSE_NAMES = ["Hand", "Pinch", "Pinch_Middle", "Pinch_Ring", "Pinch_Pinky", "Closed_Fist", "Thumb_Up", "Thumb_Down", "Victory", "ILoveYou",
               "Point"]
 MODE_POSES = ["Closed_Fist", "Thumb_Up", "Thumb_Down", "Victory", "ILoveYou"]  # poses the other hand can hold to pick a mode
-MODES = ["Edit", "Media", "Windows", "Browser", "System"]
+MODES = ["Edit", "Media", "Windows"]
 SLOTS = [p for p in POSE_NAMES if p != "Hand"]  # what the main hand can do inside a mode
 # every mapping name: a plain pose is a "core" action that works whenever no mode overrides it; "Mode/Pose" is a mode's version
 ACTION_PREFIX = "A:"  # action-only mode keeps its own mappings under this prefix, so switching modes never loses either set
@@ -33,10 +33,14 @@ def _mouse(value, **extra):
     return {"type": "mouse", "value": value, **extra}
 
 
+_NONE = {"type": "none", "value": ""}
+
+# The default set uses seven signs only: open hand (rest), pinch, point, fist, thumbs up, thumbs down and peace sign. They
+# lean on the thumb and index finger, the most independent fingers (Hager-Ross & Schieber 2000), and they were the ones
+# read reliably on the camera they were tested with. The middle, ring and pinky pinches and "I love you" have slots but no
+# default action: the first three were mistaken for the index pinch there, and the fewer signs to learn, the better.
 MAPPINGS = {
-    # core: works with one hand, or with the main hand whenever the other hand isn't holding a mode.
-    # The reliable signals (measured on one user's camera) are the index pinch, fist, thumbs and peace sign; the middle, ring
-    # and pinky pinches are bonus slots: they were mistaken for the index pinch there, so nothing important depends on them.
+    # cursor mode, core: works with one hand, or with the main hand whenever the other hand isn't holding a mode
     "Hand": _mouse("move"),  # any open or relaxed hand
     "Point": _mouse("move"),  # index finger up, the rest curled: also moves the cursor
     "Pinch": _mouse("left"),  # thumb + index: click; keep pinching and move to drag
@@ -44,68 +48,64 @@ MAPPINGS = {
     "Closed_Fist": _mouse("scroll"),  # grab and move up/down
     "Thumb_Up": _keys("<media_volume_up>", 150, repeat=True),
     "Thumb_Down": _keys("<media_volume_down>", 150, repeat=True),
-    "ILoveYou": _keys("<cmd>+<tab>", 1500),
-    "Pinch_Middle": _mouse("right", cooldown_ms=500),
-    "Pinch_Ring": _mouse("middle", cooldown_ms=500),
-    "Pinch_Pinky": {"type": "none", "value": ""},
+    "ILoveYou": _NONE, "Pinch_Middle": _NONE, "Pinch_Ring": _NONE, "Pinch_Pinky": _NONE,
+    # modes, picked by the other hand. Each uses the same five signs, and anything a mode leaves out does its core job
     # Edit: the other hand makes a fist
-    "Edit/Pinch": _keys("<ctrl>+c"), "Edit/Closed_Fist": _keys("<ctrl>+v"), "Edit/Thumb_Up": _keys("<ctrl>+y"),
-    "Edit/Thumb_Down": _keys("<ctrl>+z"), "Edit/Victory": _keys("<ctrl>+s", 1000), "Edit/ILoveYou": _keys("<ctrl>+a", 1000),
-    "Edit/Pinch_Middle": _keys("<ctrl>+x"), "Edit/Pinch_Ring": _keys("<ctrl>+f", 1000),
-    # Media: the other hand gives a thumbs up. Thumbs up/down keep their core job (volume, repeating)
+    "Edit/Pinch": _keys("<ctrl>+c"), "Edit/Closed_Fist": _keys("<ctrl>+v"), "Edit/Victory": _keys("<ctrl>+s", 1000),
+    "Edit/Thumb_Up": _keys("<ctrl>+y"), "Edit/Thumb_Down": _keys("<ctrl>+z"),
+    # Media: the other hand gives a thumbs up. Thumbs keep their core job (volume)
     "Media/Pinch": _keys("<media_play_pause>"), "Media/Closed_Fist": _keys("<media_volume_mute>"),
-    "Media/Victory": _keys("<media_next>", 600), "Media/ILoveYou": _keys("<media_previous>", 600),
-    "Media/Pinch_Middle": _keys("<media_next>", 600), "Media/Pinch_Ring": _keys("<media_previous>", 600),
-    "Media/Pinch_Pinky": _keys("<media_volume_mute>"),
+    "Media/Victory": _keys("<media_next>", 600),
     # Windows: the other hand makes a peace sign
     "Windows/Pinch": _keys("<alt>+<tab>", 500), "Windows/Closed_Fist": _keys("<cmd>+d", 1000),
-    "Windows/Thumb_Up": _keys("<cmd>+<up>", 600), "Windows/Thumb_Down": _keys("<cmd>+<down>", 600),
-    "Windows/Victory": _keys("<cmd>+<ctrl>+<left>", 800), "Windows/ILoveYou": _keys("<cmd>+<ctrl>+<right>", 800),
-    "Windows/Pinch_Middle": _keys("<cmd>+<tab>", 1000), "Windows/Pinch_Ring": _keys("<cmd>+<left>", 800),
-    "Windows/Pinch_Pinky": _keys("<alt>+<f4>", 1500),
-    # Browser: the other hand makes the "I love you" sign. The fist zooms instead of scrolling
-    "Browser/Pinch": _keys("<alt>+<left>", 600), "Browser/Closed_Fist": _mouse("zoom"),
-    "Browser/Thumb_Up": _keys("<ctrl>+<tab>", 500), "Browser/Thumb_Down": _keys("<ctrl>+<shift>+<tab>", 500),
-    "Browser/Victory": _keys("<ctrl>+w", 800), "Browser/ILoveYou": _keys("<ctrl>+<shift>+t", 1000),
-    "Browser/Pinch_Middle": _keys("<alt>+<right>", 600), "Browser/Pinch_Ring": _keys("<f5>", 1000),
-    "Browser/Pinch_Pinky": _keys("<ctrl>+t", 800),
-    # System: the other hand gives a thumbs down
-    "System/Pinch": _keys("<cmd>+<shift>+s", 1500), "System/Closed_Fist": _keys("<cmd>+h", 1500),
-    "System/Thumb_Up": _keys("<cmd>+s", 1500), "System/Thumb_Down": _keys("<cmd>+n", 1500),
-    "System/Victory": _keys("<cmd>+i", 1500), "System/ILoveYou": _keys("<cmd>+.", 1500),
-    "System/Pinch_Middle": _keys("<cmd>+l", 2500), "System/Pinch_Pinky": _keys("<ctrl>+<shift>+<esc>", 1500),
+    "Windows/Victory": _keys("<cmd>+<tab>", 1000), "Windows/Thumb_Up": _keys("<cmd>+<up>", 600),
+    "Windows/Thumb_Down": _keys("<cmd>+<down>", 600),
 }
 
 # action mode: the hand never aims the cursor. Simple actions are a single sign; the ones with a direction or an amount are
-# a sign plus a movement. The two-hand modes carry over unchanged for the less common actions.
+# a sign plus a movement. Swipes follow the Windows touchpad: down shows the desktop, sideways moves between things.
 _ACTION_CORE = {
-    "Hand": {"type": "none", "value": ""},  # relaxed hand: nothing happens
+    "Hand": _NONE,  # relaxed hand: nothing happens
     "Pinch": _keys("<cmd>+<shift>+s", 1500),  # screenshot: pinch and let go without moving
-    "Swipe_Left": _keys("<ctrl>+<shift>+<tab>", 150),  # pinch and move left: previous tab, one per step
+    "Swipe_Left": _keys("<ctrl>+<shift>+<tab>", 150),  # pinch and move left: previous tab
     "Swipe_Right": _keys("<ctrl>+<tab>", 150),  # next tab
-    "Swipe_Up": _keys("<cmd>+<tab>", 1000),  # task view, like a three-finger swipe up on a touchpad
-    "Swipe_Down": _keys("<cmd>+d", 1000),  # show desktop, like a three-finger swipe down
+    "Swipe_Up": _keys("<alt>+<tab>", 800),  # back to the last app (task view, the touchpad's swipe up, needs a cursor)
+    "Swipe_Down": _keys("<cmd>+d", 1000),  # show desktop
     "Point": _mouse("scroll"),  # index finger up, then move the hand up or down
-    "Closed_Fist": _keys("<cmd>+h", 1500),  # voice typing
+    "Closed_Fist": _keys("<cmd>+h", 1500),  # voice typing: a fist like holding a microphone
     "Thumb_Up": _keys("<media_volume_up>", 150, repeat=True),
     "Thumb_Down": _keys("<media_volume_down>", 150, repeat=True),
     "Victory": _keys("<media_play_pause>", 800),
-    "ILoveYou": _keys("<alt>+<tab>", 800),  # switch app
 }
 for _pose in POSE_NAMES + MOTIONS:
-    MAPPINGS[ACTION_PREFIX + _pose] = _ACTION_CORE.get(_pose, {"type": "none", "value": ""})
+    MAPPINGS[ACTION_PREFIX + _pose] = _ACTION_CORE.get(_pose, _NONE)
 for _name, _m in list(MAPPINGS.items()):
     if "/" in _name and not _name.startswith(ACTION_PREFIX):
         MAPPINGS[ACTION_PREFIX + _name] = dict(_m)
-# earlier defaults of action-mode mappings, as (value, cooldown_ms, repeat). load() swaps a saved one still equal to one of
-# these for today's default, so untouched settings follow the new layout and edited ones stay
-_OLD_ACTION = {
-    "A:Thumb_Up": [("<ctrl>+<tab>", 500, False), ("<ctrl>+<tab>", 800, True)],
-    "A:Thumb_Down": [("<ctrl>+<shift>+<tab>", 500, False), ("<ctrl>+<shift>+<tab>", 800, True)],
+MAPPINGS.update({  # in action mode, swipes inside a mode move through that mode's things
+    "A:Media/Swipe_Left": _keys("<media_previous>", 600), "A:Media/Swipe_Right": _keys("<media_next>", 600),
+    "A:Windows/Swipe_Left": _keys("<cmd>+<ctrl>+<left>", 800),  # previous / next virtual desktop, like a four-finger swipe
+    "A:Windows/Swipe_Right": _keys("<cmd>+<ctrl>+<right>", 800),
+})
+KNOWN = set(GESTURES + ACTION_GESTURES)
+# earlier defaults that have since changed, by their old value. load() drops a saved mapping still holding its old default,
+# so untouched settings get today's set while mappings the user changed stay
+_OLD = {
+    "ILoveYou": "<cmd>+<tab>", "Pinch_Middle": "right", "Pinch_Ring": "middle",
+    "A:ILoveYou": "<alt>+<tab>", "A:Swipe_Up": "<cmd>+<tab>", "A:Thumb_Up": "<ctrl>+<tab>", "A:Thumb_Down": "<ctrl>+<shift>+<tab>",
+    # empty before ("none"; the settings window saves every row), so they get their new default
+    "A:Media/Swipe_Left": "", "A:Media/Swipe_Right": "", "A:Windows/Swipe_Left": "", "A:Windows/Swipe_Right": "",
+    **{prefix + name: value for prefix in ("", ACTION_PREFIX) for name, value in {
+        "Edit/ILoveYou": "<ctrl>+a", "Edit/Pinch_Middle": "<ctrl>+x", "Edit/Pinch_Ring": "<ctrl>+f",
+        "Media/ILoveYou": "<media_previous>", "Media/Pinch_Middle": "<media_next>", "Media/Pinch_Ring": "<media_previous>",
+        "Media/Pinch_Pinky": "<media_volume_mute>", "Windows/Victory": "<cmd>+<ctrl>+<left>",
+        "Windows/ILoveYou": "<cmd>+<ctrl>+<right>", "Windows/Pinch_Middle": "<cmd>+<tab>", "Windows/Pinch_Ring": "<cmd>+<left>",
+        "Windows/Pinch_Pinky": "<alt>+<f4>",
+    }.items()},
 }
 
 DEFAULTS = {
-    "version": 7,  # bump when mapping names change; load() then adds the new defaults (and resets very old settings)
+    "version": 8,  # bump when mapping names change; load() then adds the new defaults (and resets very old settings)
     "camera": 0,
     "hand": "Right",  # with both hands in view, this one moves the cursor and the other one picks the mode
     "control_mode": "actions",  # "actions": gestures only trigger actions; "cursor" (optional): the hand moves the cursor
@@ -132,7 +132,7 @@ DEFAULTS = {
     "ignore_gaze": [],  # [yaw, pitch] of places looked at that aren't monitors (the keyboard...): looking there never switches
     "ignore_head": [],  # the same for gaze_source "head"
     "monitor_margin": 0.75,  # how much nearer the new monitor must look than the current one (lower = steadier)
-    "modes": {"Edit": "Closed_Fist", "Media": "Thumb_Up", "Windows": "Victory", "Browser": "ILoveYou", "System": "Thumb_Down"},
+    "modes": {"Edit": "Closed_Fist", "Media": "Thumb_Up", "Windows": "Victory"},
     "mappings": MAPPINGS,
 }
 
@@ -158,14 +158,11 @@ def load(path=PATH):
     # version 3 -> 4 only added mappings and modes: the user's own mappings stay, and the new ones are filled in below
     if version == 6 and data.get("monitor_dwell_ms") == 400:  # 3.4's switch delay, left as it came: take the quicker one
         data.pop("monitor_dwell_ms")
-    if version in (4, 5):  # action-mode defaults changed since; drop the old ones (left as they came) so the new ones apply
-        if version == 4 and data.get("action_hold_ms") == 250:
-            data.pop("action_hold_ms")
-        saved_mappings = data.get("mappings") if isinstance(data.get("mappings"), dict) else {}
-        for name, olds in _OLD_ACTION.items():
-            m = saved_mappings.get(name)
-            if isinstance(m, dict) and (m.get("value"), m.get("cooldown_ms"), m.get("repeat", False)) in olds:
-                del saved_mappings[name]
+    if version == 4 and data.get("action_hold_ms") == 250:
+        data.pop("action_hold_ms")
+    if isinstance(version, int) and 4 <= version < 8 and isinstance(data.get("mappings"), dict):
+        data["mappings"] = {name: m for name, m in data["mappings"].items()
+                            if not (isinstance(m, dict) and name in _OLD and m.get("value") == _OLD[name])}
     data["version"] = DEFAULTS["version"]
     if data.get("hand_mode") in ("single", "two"):
         # older values. "single" was the default, not a choice, and only ever tracked one hand; "auto" now tracks both
@@ -176,11 +173,11 @@ def load(path=PATH):
             cfg[key] = value
     saved = {
         name: m for name, m in cfg["mappings"].items()
-        if isinstance(m, dict) and m.get("type") in ACTION_TYPES and isinstance(m.get("value"), str)
+        if name in KNOWN and isinstance(m, dict) and m.get("type") in ACTION_TYPES and isinstance(m.get("value"), str)
         and isinstance(m.get("cooldown_ms", 0), (int, float))
     }
     cfg["mappings"] = {**copy.deepcopy(DEFAULTS["mappings"]), **saved}
-    cfg["modes"] = {**DEFAULTS["modes"], **cfg["modes"]}
+    cfg["modes"] = {**DEFAULTS["modes"], **{mode: pose for mode, pose in cfg["modes"].items() if mode in MODES}}
     if _mode_errors(cfg["modes"]):  # a damaged modes table must not cost the user the rest of their settings
         cfg["modes"] = copy.deepcopy(DEFAULTS["modes"])
     try:

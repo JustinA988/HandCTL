@@ -54,88 +54,78 @@ The first launch opens a setup wizard: pick your camera, mark the cursor area by
 
 ## Default gestures
 
-Raise a hand in view of the camera with your elbow resting on the desk or chair arm; holding your whole arm out tires it quickly. Your hand doesn't have to face the camera squarely: poses are read from the hand's 3D shape, and the camera can sit above, below or beside the screen.
+Seven signs do everything: **open hand** (rest), **pinch**, **point**, **fist**, **thumbs up**, **thumbs down** and **peace sign**. Rest your elbow on the desk or chair arm and keep your hand low and relaxed; holding the arm up tires it within minutes. Your hand doesn't have to face the camera squarely: poses are read from the hand's 3D shape.
 
 ### Action mode (default)
 
-Gestures trigger actions; the hand never moves the cursor or clicks. Simple actions are a single sign. Ones with a direction or an amount are a sign plus a movement. Every sign has to be held for 0.15 s (Settings → Gesture tuning), so nothing happens while you just move a relaxed hand about.
+Gestures trigger actions; the hand never moves the cursor. Simple actions are one sign. Ones with a direction are a pinch plus a move, like a touchpad swipe. Hold a sign for 0.15 s; a relaxed hand does nothing.
 
 | Gesture | Action |
 |---|---|
 | Pinch thumb + index, then let go | Screenshot |
-| Pinch and move left / right | Previous / next tab (one per swipe; pinch again for another) |
-| Pinch and move up | Task view |
+| Pinch and move left / right | Previous / next tab |
+| Pinch and move up | Back to the last app |
 | Pinch and move down | Show desktop |
-| Point (index finger up, the others curled) and move up / down | Scroll |
+| Point (index finger up) and move up / down | Scroll |
 | Fist | Voice typing |
-| Thumbs up / thumbs down (hold) | Volume up / down (repeats) |
+| Thumbs up / down (hold) | Volume up / down |
 | Peace sign | Play/pause |
-| "I love you" sign | Switch app |
 
-A pinch acts when you let go, and only if it didn't move: a pinch that moves is a swipe instead. A swipe counts from the moment your fingers close, so a quick flick works, and it fires once, in the direction you moved most. A mode the other hand starts while you pinch still counts. The peace sign and "I love you" are also read from the shape of your fingers, so they work with the hand turned.
+A pinch that moves is a swipe, not a screenshot. Each swipe does one thing; pinch again for another.
 
-With both hands in view, the other hand picks a mode exactly as in cursor mode below (fist = Edit, thumbs up = Media, peace sign = Windows, "I love you" = Browser, thumbs down = System), for copy, paste, undo, close tab, lock screen and the rest; swipes and pointing keep their jobs in every mode. The Gestures tab keeps a separate set of gestures for each control mode (pick which to edit at the top), so changing one never changes the other.
+### Two hands: modes
 
-Switch control mode under **Settings → Hands → Control mode** or from the tray icon's menu; it applies at once.
+Your **other hand** holds a sign like a Shift key; while it does, your **main hand** (right by default) does that mode's version of each sign. Let go and everything is back to normal. Anything a mode leaves out keeps its usual job.
+
+| Main hand | Edit (other hand: fist) | Media (other hand: thumbs up) | Windows (other hand: peace sign) |
+|---|---|---|---|
+| Pinch | Copy | Play/pause | Switch app |
+| Fist | Paste | Mute | Show desktop |
+| Peace sign | Save | Next track | Task view |
+| Thumbs up | Redo | (volume up) | Maximize |
+| Thumbs down | Undo | (volume down) | Minimize |
+| Pinch and move left / right | (tabs) | Previous / next track | Previous / next desktop |
 
 ### Cursor mode (optional)
 
-Your hand moves the cursor and clicks.
-
-#### One hand
+Turn it on under **Settings → Hands → Control mode** or from the tray menu (it applies at once). The hand moves the cursor:
 
 | Gesture | Action |
 |---|---|
-| Any open or relaxed hand, or pointing | Move cursor (it follows the centre of your palm) |
-| Pinch thumb + index fingertip | Left click; keep pinching and move = drag |
+| Open hand, or pointing | Move cursor (it follows the centre of your palm) |
+| Pinch | Left click; keep pinching and move = drag |
 | Peace sign | Right click |
 | Fist, move up/down | Scroll |
-| Thumbs up / thumbs down (hold) | Volume up / down (repeats) |
-| "I love you" sign | Task view |
+| Thumbs up / down (hold) | Volume up / down |
 
-#### Two hands: modes
+The same three modes work here, with a pinch acting straight away instead of when you let go.
 
-With both hands in view, your **main hand** (right by default; change it under Settings → Hands) keeps doing everything above. Your **other hand** holds a pose like a Shift key to pick a *mode*; while it does, the main hand's gestures do that mode's actions. Let go and everything returns to normal.
+### Why these signs
 
-| Other hand holds | Mode |
-|---|---|
-| Fist | Edit |
-| Thumbs up | Media |
-| Peace sign | Windows |
-| "I love you" sign | Browser |
-| Thumbs down | System |
+- **Thumb and index first.** The thumb and index finger move most independently of the others, while the middle and ring fingers drag their neighbours along ([Häger-Ross & Schieber 2000](https://www.jneurosci.org/content/jneuro/20/22/8542.full.pdf)). So the set leans on pinch and point, and leaves out the ring and middle pinches (which were also mistaken for the index pinch on the camera this was tested with) and the "I love you" sign.
+- **Few signs, low and relaxed.** Mid-air input tires the arm fast ("gorilla arm"; [Hincapié-Ramos et al., CHI 2014](https://hci.cs.umanitoba.ca/publications/details/consumed-endurance-a-metric-to-quantify-arm-fatigue-of-mid-air-interactions)), so every gesture is a short sign or a small move made from a resting position, and a relaxed hand does nothing.
+- **Pinch as the main input, pinch and move to swipe**, as on headsets that track hands ([Apple, WWDC24](https://developer.apple.com/videos/play/wwdc2024/10094/)).
+- **Swipes follow the Windows touchpad:** down shows the desktop, sideways moves between things, and inside Windows mode sideways switches desktops as a four-finger swipe does ([Microsoft](https://support.microsoft.com/help/17206)). Swipe up goes back to the last app instead of opening task view, because task view needs a cursor.
+- **Modes on the other hand.** In two-handed work the non-dominant hand sets the frame and the dominant hand does the detailed work ([Guiard 1987](https://web-archive.southampton.ac.uk/cogprints.org/625/)), so the other hand picks a mode with the three steadiest signs to hold (fist, thumbs up, peace sign) and the main hand reuses the same five signs in every mode.
+- **Easy to remember:** thumbs mean up/down, a fist is a microphone grip (voice typing), swipes move between things.
 
-What the main hand's gestures do in each mode:
+### Changing them
 
-| Main hand | Edit | Media | Windows | Browser | System |
-|---|---|---|---|---|---|
-| Pinch (thumb + index) | Copy | Play/pause | Switch app | Back | Screenshot |
-| Fist | Paste | Mute | Show desktop | Zoom (move up/down) | Voice typing |
-| Thumbs up | Redo | Volume up | Maximize | Next tab | Search |
-| Thumbs down | Undo | Volume down | Minimize | Previous tab | Notifications |
-| Peace sign | Save | Next track | Previous desktop | Close tab | Settings |
-| "I love you" | Select all | Previous track | Next desktop | Reopen closed tab | Emoji panel |
+Every gesture can be changed under the **Gestures** tab (one table for the core gestures and one per mode, for each control mode), and each mode's sign under Settings → Hands. **Reset gestures to defaults** brings back this set. Actions can be mouse actions (`move`, `left`, `right`, `middle`, `scroll`, `hscroll`, `zoom`), key combos (`<ctrl>+<alt>+t`, `<cmd>+d`, `<media_next>`, in [pynput's HotKey format](https://pynput.readthedocs.io/en/latest/keyboard.html#global-hotkeys)), or shell commands. The middle, ring and pinky pinches and "I love you" have empty slots to fill if they work well for you.
 
-Anything a mode doesn't use does its normal job (thumbs up is still volume in Media mode). Every mapping can be changed under the **Gestures** tab, which has a table for the normal gestures and one per mode, and each mode's pose can be changed under Settings → Hands. Actions can be mouse actions (`move`, `left`, `right`, `middle`, `scroll`, `hscroll`, `zoom`), key combos (`<ctrl>+<alt>+t`, `<cmd>+d`, `<media_next>`, in [pynput's HotKey format](https://pynput.readthedocs.io/en/latest/keyboard.html#global-hotkeys)), or shell commands.
-
-**Bonus pinches.** Thumb + middle (right click), thumb + ring (middle click) and thumb + pinky also have slots, with extra actions in the modes (cut, find, forward, refresh, new tab, close window, lock screen, task manager and more). On the camera these were tested on, the middle and ring pinches were mistaken for the index pinch and the pinky pinch worked about a third of the time, so nothing important depends on them. They may work better on your hands.
-
-How it avoids misfires and missed input:
-- The cursor needs no special pose, so it can't be "lost" by a finger out of place.
-- A click lands where the cursor was just before your fingers closed, and the cursor holds still while you pinch.
-- A pinch only ends when the fingers clearly part, and a straight finger is required to pinch, so a fist with the thumb against it isn't read as a pinch.
-- A hand that vanishes for under 0.3 s (a tracking hiccup) changes nothing. Poses other than the index pinch must be held about a tenth of a second, ring and pinky pinches a fifth, and each action has a cooldown.
-- A mode starts after its pose is held for 0.15 s and ends 0.25 s after you drop it, so a flicker doesn't flip modes. An action stays what it was when its gesture started, even if the mode changes underneath it.
-- Phantom hands are ignored: small hand-shaped detections on your face or hairline, and hands cut off by the edge of the picture (a hand resting at the bottom edge used to cause stray clicks).
-- Closing the mode hand's pose never moves the cursor or clicks: that hand only picks the mode.
-
-If a second hand gets in the way (for example while typing), set **Settings → Hands → Hand mode** to **one**: only one hand is ever tracked, and modes are off.
-
-To keep this fast, the app tracks with the cheaper one-hand mode and checks for a second hand four times a second, so a second hand is noticed within about a quarter of a second of appearing. (Always looking for two hands made every frame about 9 ms slower, even with one hand in view.)
-
-Settings saved by an earlier version keep your camera, calibration and your own mappings; the new modes are added alongside them. Settings from version 2 or earlier have their mappings reset because the gesture names changed.
+Settings from an earlier version get this set, except for any gesture you had changed yourself, which keeps your choice. The Browser and System modes are gone.
 
 **Shell commands are disabled by default.** Enable them under Settings → General only if you trust every command in your mappings.
+
+### How it avoids misfires
+
+- A relaxed hand does nothing in action mode, and the cursor needs no special pose in cursor mode.
+- A click lands where the cursor was just before your fingers closed, and the cursor holds still while you pinch.
+- A pinch only ends when the fingers clearly part, and a straight finger is required to pinch, so a fist with the thumb against it isn't read as a pinch.
+- A hand that vanishes for under 0.3 s (a tracking hiccup) changes nothing. Signs must be held briefly, and each action has a cooldown.
+- A mode starts after its sign is held for 0.15 s and ends 0.25 s after you drop it.
+- Phantom hands are ignored: small hand-shaped detections on your face or hairline, and hands cut off by the edge of the picture.
+- If a second hand gets in the way (say, typing), set **Settings → Hands → Hand mode** to **one**: only one hand is tracked, and modes are off.
 
 ## Settings window
 

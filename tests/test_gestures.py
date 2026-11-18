@@ -189,12 +189,13 @@ def test_held_pinch_drags_and_survives_a_tracking_dropout():
 def test_pose_must_be_held_before_it_fires_and_respects_cooldown():
     e = Engine(cfg())
     assert config.DEFAULTS["hold_ms"] == 100
-    assert run(e, hold("ILoveYou", 0, 0.07)) == []  # a flash of the pose, shorter than the 100 ms hold, does nothing
-    events = run(e, hold("ILoveYou", 0.07, 0.5))
+    e.mode = "Windows"  # peace sign there: task view, with a 1000 ms cooldown
+    assert run(e, hold("Victory", 0, 0.07)) == []  # a flash of the pose, shorter than the 100 ms hold, does nothing
+    events = run(e, hold("Victory", 0.07, 0.5))
     assert [ev[1]["value"] for ev in events] == ["<cmd>+<tab>"]
-    again = run(e, hold("Hand", 0.5, 0.7) + hold("ILoveYou", 0.7, 1.3))
-    assert "run" not in kinds(again)  # held long enough, but still inside the 1500 ms cooldown
-    later = run(e, hold("Hand", 1.3, 2.2) + hold("ILoveYou", 2.2, 2.7))
+    again = run(e, hold("Hand", 0.5, 0.7) + hold("Victory", 0.7, 1.0))
+    assert "run" not in kinds(again)  # held long enough, but still inside the cooldown
+    later = run(e, hold("Hand", 1.0, 1.9) + hold("Victory", 1.9, 2.4))
     assert kinds(later).count("run") == 1  # fires again once the cooldown has passed
 
 
@@ -288,11 +289,12 @@ def test_action_only_mode_never_moves_or_clicks_and_needs_a_longer_hold():
 
 
 def test_action_only_one_hand_quick_actions():
-    expected = {"Pinch": "<cmd>+<shift>+s", "Closed_Fist": "<cmd>+h", "Victory": "<media_play_pause>", "ILoveYou": "<alt>+<tab>"}
+    expected = {"Pinch": "<cmd>+<shift>+s", "Closed_Fist": "<cmd>+h", "Victory": "<media_play_pause>"}
     for pose, combo in expected.items():  # single signs, fired once (the pinch when let go)
         e = Engine(actions_cfg())
         got = runs(run(e, hold("Hand", 0, 0.3) + hold(pose, 0.3, 0.8) + hold("Hand", 0.8, 1.1)))
         assert got == [combo], (pose, got)
+    assert runs(run(Engine(actions_cfg()), hold("ILoveYou", 0, 0.5))) == []  # "I love you" has no default: fewer to learn
     for pose, key in (("Thumb_Up", "<media_volume_up>"), ("Thumb_Down", "<media_volume_down>")):  # volume, repeating
         got = runs(run(Engine(actions_cfg()), hold("Hand", 0, 0.3) + hold(pose, 0.3, 1.0)))
         assert set(got) == {key} and len(got) >= 3, (pose, got)
@@ -326,7 +328,7 @@ def test_action_mode_pinch_and_move_swipes_instead_of_taking_a_screenshot():
     e = Engine(actions_cfg())
     got = runs(run(e, pinch_moving(0, (0.5, 0.5), (0.33, 0.5)) + hold("Hand", 1.0, 1.3, (0.33, 0.5))))
     assert got and set(got) == {"<ctrl>+<shift>+<tab>"}
-    for end, key in (((0.52, 0.3), "<cmd>+<tab>"), ((0.5, 0.7), "<cmd>+d")):  # up: task view; down: show desktop
+    for end, key in (((0.52, 0.3), "<alt>+<tab>"), ((0.5, 0.7), "<cmd>+d")):  # up: last app; down: show desktop
         got = runs(run(Engine(actions_cfg()), pinch_moving(0, (0.5, 0.5), end) + hold("Hand", 1.0, 1.3, end)))
         assert got == [key], (end, got)  # the long cooldown keeps it to one, so the toggle doesn't undo itself
     # sideways, then drifting down: the first step picked the sideways axis, so no show-desktop
@@ -336,6 +338,18 @@ def test_action_mode_pinch_and_move_swipes_instead_of_taking_a_screenshot():
     # a pinch that only wobbles a little is a screenshot
     wobble = [(i * 0.033, "Pinch", (0.5 + 0.01 * (i % 3), 0.5)) for i in range(20)]
     assert runs(run(Engine(actions_cfg()), wobble + hold("Hand", 0.7, 1.0))) == ["<cmd>+<shift>+s"]
+
+
+def test_swipes_inside_media_and_windows_modes():
+    for mode, left, right in (("Media", "<media_previous>", "<media_next>"),
+                              ("Windows", "<cmd>+<ctrl>+<left>", "<cmd>+<ctrl>+<right>")):
+        for end, key in (((0.25, 0.5), left), ((0.75, 0.5), right)):
+            e = Engine(actions_cfg())
+            e.mode = mode
+            assert runs(run(e, pinch_moving(0, (0.5, 0.5), end) + hold("Hand", 1.0, 1.3, end))) == [key], (mode, end)
+    e = Engine(actions_cfg())
+    e.mode = "Edit"  # a mode without its own swipes keeps the core ones: tabs
+    assert runs(run(e, pinch_moving(0, (0.5, 0.5), (0.75, 0.5)) + hold("Hand", 1.0, 1.3, (0.75, 0.5)))) == ["<ctrl>+<tab>"]
 
 
 def test_a_quick_swipe_counts_from_when_the_fingers_closed_and_fires_once():
@@ -410,13 +424,15 @@ def test_a_mode_change_mid_pose_does_not_switch_the_action():
     assert kinds(run(e, hold("Hand", 0.9, 1.0)))[0] == "release"
 
 
-def test_zoom_middle_click_and_sideways_scroll():
-    e = Engine(cfg())
-    e.mode = "Browser"
+def test_zoom_middle_click_and_sideways_scroll():  # not defaults any more, but still available to map
+    c = cfg()
+    c["mappings"].update({"Edit/Closed_Fist": {"type": "mouse", "value": "zoom"}, "Pinch_Ring": {"type": "mouse", "value": "middle"}})
+    e = Engine(c)
+    e.mode = "Edit"
     run(e, hold("Hand", 0, 0.3))
     events = run(e, [(0.3 + i * 0.033, "Closed_Fist", (0.5, 0.8 - i * 0.01)) for i in range(40)])
-    assert sum(ev[1] for ev in events if ev[0] == "zoom") > 0 and "scroll" not in kinds(events)  # fist zooms in Browser mode
-    events = run(Engine(cfg()), hold("Hand", 0, 0.5) + hold("Pinch_Ring", 0.5, 0.8))
+    assert sum(ev[1] for ev in events if ev[0] == "zoom") > 0 and "scroll" not in kinds(events)
+    events = run(Engine(c), hold("Hand", 0, 0.5) + hold("Pinch_Ring", 0.5, 0.8))
     assert [ev[1]["value"] for ev in events if ev[0] == "run"] == ["middle"] and "move" in kinds(events)
     c = cfg()
     c["mappings"]["Closed_Fist"] = {"type": "mouse", "value": "hscroll"}
@@ -474,7 +490,7 @@ def test_default_smoothing_balances_steadiness_and_lag():
 def test_defaults_are_valid_and_bad_values_rejected():
     assert config.validate(cfg()) == []
     assert set(config.DEFAULTS["mappings"]) <= set(config.GESTURES + config.ACTION_GESTURES)  # empty slots fall back to the core action
-    assert len(config.GESTURES) == 11 + 5 * 10 and all(f"{m}/Pinch" in config.DEFAULTS["mappings"] for m in config.MODES)
+    assert len(config.GESTURES) == 11 + 3 * 10 and all(f"{m}/Pinch" in config.DEFAULTS["mappings"] for m in config.MODES)
     c = cfg(hand_mode="three")
     c["box"] = [0.5, 0, 0.5, 1]
     c["mappings"]["Victory"]["value"] = "<notakey>"
@@ -549,7 +565,7 @@ def test_control_mode_is_validated_and_action_only_mappings_never_aim_the_cursor
 def test_version_4_action_only_defaults_move_to_the_new_ones_but_user_changes_stay(tmp_path):
     p = tmp_path / "config.json"
     old_up = {"type": "keys", "value": "<ctrl>+<tab>", "cooldown_ms": 500}
-    mine = {"type": "keys", "value": "<ctrl>+<shift>+<tab>", "cooldown_ms": 300, "repeat": False}
+    mine = {"type": "keys", "value": "<ctrl>+<page_up>", "cooldown_ms": 300, "repeat": False}
     p.write_text(json.dumps({"version": 4, "action_hold_ms": 250, "mappings": {"A:Thumb_Up": old_up, "A:Thumb_Down": mine}}))
     loaded = config.load(p)
     assert loaded["action_hold_ms"] == 150 and loaded["mappings"]["A:Thumb_Up"] == config.DEFAULTS["mappings"]["A:Thumb_Up"]
@@ -564,8 +580,27 @@ def test_version_4_action_only_defaults_move_to_the_new_ones_but_user_changes_st
 
 def test_every_default_key_combo_is_valid_and_dangerous_ones_have_cooldowns():
     assert config.validate(cfg()) == []  # includes parsing every key combo
-    slow = lambda name: config.DEFAULTS["mappings"][name]["cooldown_ms"] >= 1500
-    assert slow("Windows/Pinch_Pinky") and config.DEFAULTS["mappings"]["System/Pinch_Middle"]["cooldown_ms"] >= 2500  # close window, lock screen
+    slow = lambda name: config.DEFAULTS["mappings"][name]["cooldown_ms"] >= 1000
+    assert slow("A:Pinch") and slow("A:Closed_Fist") and slow("A:Swipe_Down")  # screenshot, voice typing, show desktop
+
+
+def test_the_default_set_uses_only_the_seven_reliable_signs_and_three_modes():
+    used = {name.split(":")[-1].split("/")[-1] for name, m in config.DEFAULTS["mappings"].items() if m["type"] != "none"}
+    assert used <= {"Hand", "Pinch", "Point", "Closed_Fist", "Thumb_Up", "Thumb_Down", "Victory", *config.MOTIONS}
+    assert config.MODES == ["Edit", "Media", "Windows"] and set(config.DEFAULTS["modes"].values()) == {"Closed_Fist", "Thumb_Up", "Victory"}
+
+
+def test_3_5_settings_get_the_new_set_but_keep_what_the_user_changed(tmp_path):
+    p = tmp_path / "config.json"
+    old = {"ILoveYou": {"type": "keys", "value": "<cmd>+<tab>", "cooldown_ms": 1500},  # an untouched old default
+           "Victory": {"type": "keys", "value": "<media_play_pause>", "cooldown_ms": 1500},  # the user's own choice
+           "A:Media/Swipe_Right": {"type": "none", "value": "", "cooldown_ms": 0, "repeat": False},  # saved while it was empty
+           "Browser/Pinch": {"type": "keys", "value": "<alt>+<left>"}}  # a mode that is gone
+    p.write_text(json.dumps({"version": 7, "mappings": old, "modes": {"Edit": "Closed_Fist", "Browser": "ILoveYou"}}))
+    loaded = config.load(p)
+    m = loaded["mappings"]
+    assert m["ILoveYou"]["type"] == "none" and m["Victory"] == old["Victory"] and m["A:Media/Swipe_Right"]["value"] == "<media_next>"
+    assert "Browser/Pinch" not in m and loaded["modes"] == config.DEFAULTS["modes"] and config.validate(loaded) == []
 
 
 def test_old_hand_modes_become_auto_and_keep_everything_else(tmp_path):

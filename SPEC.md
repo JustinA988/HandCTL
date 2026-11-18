@@ -166,5 +166,13 @@ Measured on one user's camera (guided recording of 1,839 frames, replayed throug
 - Faster: face read every 0.1 s (was 0.15), `monitor_dwell_ms` 250 (was 400; settings version 7 moves an untouched 400).
 - Not verified live.
 
+#### 3.6: a simpler default set
+
+- Seven signs (open hand, pinch, point, fist, thumbs up/down, peace sign), the ones read reliably on the test camera and leaning on the thumb and index finger, the most independent digits (Hager-Ross & Schieber 2000). The middle/ring/pinky pinches and "I love you" keep their slots with no default action.
+- Modes cut from five to three (Edit = fist, Media = thumbs up, Windows = peace sign: the steadiest signs to hold with the other hand, after Guiard's kinematic chain), each using the same five main-hand signs. Browser and System are gone (tabs live in the core swipes).
+- Action mode: swipe up = Alt+Tab (task view needs a cursor), "I love you" no longer switches app; inside Media mode swipes change track, inside Windows mode they switch virtual desktop (the touchpad's four-finger swipe).
+- Settings version 8: `_OLD` lists every default that changed, by its old value; a saved mapping still holding it is dropped so the new default applies, and one the user changed stays. Saved mappings for names that no longer exist (Browser/..., System/...) and modes that no longer exist are dropped.
+- Verified: 102 tests; the replayed session gives the same actions as before (nothing with no hands, open hands or near the face). The tester's own peace-sign change (play/pause in cursor mode) survives the upgrade. Not verified live.
+
 ### v4
 - Recording custom poses in settings, optional second camera, voice commands, gesture profile import/export, wake-gesture / hold-to-act activation, macOS then Linux.
