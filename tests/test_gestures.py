@@ -276,9 +276,9 @@ def runs(events):
 
 def test_action_only_mode_never_moves_or_clicks_and_needs_a_longer_hold():
     e = Engine(actions_cfg())
-    assert config.DEFAULTS["action_hold_ms"] == 250
+    assert config.DEFAULTS["action_hold_ms"] == 150
     assert run(e, hold("Hand", 0, 1.0, (0.2, 0.2)) + hold("Hand", 1.0, 2.0, (0.8, 0.8))) == []  # a hand waving about does nothing
-    assert run(e, hold("Pinch", 2.0, 2.2)) == []  # a pinch shorter than the hold is ignored: no stray screenshot
+    assert run(e, hold("Pinch", 2.0, 2.1)) == []  # a pinch shorter than the hold is ignored: no stray screenshot
     assert runs(run(e, hold("Pinch", 2.2, 2.6))) == ["<cmd>+<shift>+s"]
     events = run(e, hold("Hand", 2.6, 3.0) + hold("Pinch", 3.0, 3.6) + hold("Hand", 3.6, 4.0))
     assert set(kinds(events)) <= {"run"} and "press" not in kinds(events)  # a click would be a press
@@ -291,6 +291,8 @@ def test_action_only_one_hand_quick_actions():
         e = Engine(actions_cfg())
         got = runs(run(e, hold("Hand", 0, 0.3) + hold(pose, 0.3, 0.8)))
         assert got == [combo], (pose, got)
+    # holding a thumb keeps walking through tabs, one every 0.8 s
+    assert runs(run(Engine(actions_cfg()), hold("Hand", 0, 0.3) + hold("Thumb_Up", 0.3, 2.0))) == ["<ctrl>+<tab>"] * 2
     # even a fist, which scrolls in cursor mode, doesn't scroll here
     e = Engine(actions_cfg())
     events = run(e, [(i * 0.033, "Closed_Fist", (0.5, 0.8 - i * 0.01)) for i in range(40)])
@@ -426,7 +428,7 @@ def test_older_settings_keep_camera_but_get_new_gesture_mappings(tmp_path):
     p.write_text(json.dumps(old))
     loaded = config.load(p)
     assert loaded["camera"] == 1 and loaded["min_cutoff"] == 0.5 and "cursor_mode" not in loaded
-    assert loaded["mappings"] == config.DEFAULTS["mappings"] and loaded["version"] == 4
+    assert loaded["mappings"] == config.DEFAULTS["mappings"] and loaded["version"] == config.DEFAULTS["version"]
     assert loaded["wizard_done"] is False  # the wizard is offered again, because it now calibrates pinch
 
 
@@ -435,7 +437,7 @@ def test_version_3_settings_keep_the_users_mappings_and_gain_the_new_ones(tmp_pa
     mine = {"type": "keys", "value": "<ctrl>+<alt>+t", "cooldown_ms": 700}
     p.write_text(json.dumps({"version": 3, "wizard_done": True, "camera": 1, "mappings": {"Victory": mine, "Pinch": {"type": "none", "value": ""}}}))
     loaded = config.load(p)
-    assert loaded["version"] == 4 and loaded["wizard_done"] is True and loaded["camera"] == 1  # nothing to redo
+    assert loaded["version"] == config.DEFAULTS["version"] and loaded["wizard_done"] is True and loaded["camera"] == 1  # nothing to redo
     assert loaded["mappings"]["Victory"] == mine and loaded["mappings"]["Pinch"]["type"] == "none"  # their edits survive
     assert loaded["mappings"]["Edit/Pinch"] == config.DEFAULTS["mappings"]["Edit/Pinch"]  # the new modes are filled in
     assert loaded["modes"] == config.DEFAULTS["modes"]
@@ -461,6 +463,18 @@ def test_control_mode_is_validated_and_action_only_mappings_never_aim_the_cursor
     loaded = config.load(p)
     assert loaded["control_mode"] == "cursor" and loaded["mappings"]["Victory"] == mine and loaded["camera"] == 1
     assert loaded["mappings"]["A:Pinch"] == config.DEFAULTS["mappings"]["A:Pinch"]
+
+
+def test_version_4_action_only_defaults_move_to_the_new_ones_but_user_changes_stay(tmp_path):
+    p = tmp_path / "config.json"
+    old_up = {"type": "keys", "value": "<ctrl>+<tab>", "cooldown_ms": 500}
+    mine = {"type": "keys", "value": "<ctrl>+<shift>+<tab>", "cooldown_ms": 300, "repeat": False}
+    p.write_text(json.dumps({"version": 4, "action_hold_ms": 250, "mappings": {"A:Thumb_Up": old_up, "A:Thumb_Down": mine}}))
+    loaded = config.load(p)
+    assert loaded["action_hold_ms"] == 150 and loaded["mappings"]["A:Thumb_Up"] == config.DEFAULTS["mappings"]["A:Thumb_Up"]
+    assert loaded["mappings"]["A:Thumb_Down"] == mine
+    p.write_text(json.dumps({"version": 4, "action_hold_ms": 400}))
+    assert config.load(p)["action_hold_ms"] == 400
 
 
 def test_every_default_key_combo_is_valid_and_dangerous_ones_have_cooldowns():

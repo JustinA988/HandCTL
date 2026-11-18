@@ -61,6 +61,38 @@ def test_control_mode_switch_and_the_two_gesture_sets(fake_app):
     assert s.set_picker.currentIndex() == 1
 
 
+def test_picking_a_control_mode_applies_at_once(fake_app):
+    from handctl.__main__ import Settings
+    picked = []
+    fake_app.set_control_mode = picked.append
+    s = Settings(fake_app)
+    assert picked == []  # filling the window doesn't count as picking
+    s.fields["control_mode"].activated.emit(1)  # what a user's pick in the dropdown sends
+    s.fields["control_mode"].setCurrentText("actions")
+    s.fields["control_mode"].activated.emit(1)
+    assert picked[-1] == "actions"
+
+
+def test_closing_with_unsaved_changes_asks_first(fake_app, monkeypatch):
+    import handctl.__main__ as main
+    from PySide6.QtGui import QCloseEvent
+    s = main.Settings(fake_app)
+    assert s.edits() == s.unchanged
+    s.fields["control_mode"].setCurrentText("actions")
+    assert s.edits() == s.unchanged  # control mode applies at once, so it isn't an unsaved change
+    s.fields["beta"].setValue(3.5)
+    monkeypatch.setattr(main.QMessageBox, "question", lambda *a: main.QMessageBox.StandardButton.Cancel)
+    event = QCloseEvent()
+    s.closeEvent(event)
+    assert not event.isAccepted() and fake_app.saved == []  # Cancel: stays open, nothing saved
+    monkeypatch.setattr(main, "set_autostart", lambda on: None)
+    monkeypatch.setattr(main.QMessageBox, "question", lambda *a: main.QMessageBox.StandardButton.Save)
+    monkeypatch.setattr(main.QApplication, "instance", lambda: type("Q", (), {"quit": lambda self: None})())
+    event = QCloseEvent()
+    s.closeEvent(event)
+    assert event.isAccepted() and fake_app.saved[-1]["beta"] == 3.5 and s.edits() == s.unchanged
+
+
 def test_save_applies_and_persists(fake_app, monkeypatch):
     import handctl.__main__ as main
     monkeypatch.setattr(main, "set_autostart", lambda on: None)  # never touch the real registry in tests

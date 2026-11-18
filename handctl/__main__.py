@@ -164,6 +164,8 @@ class Settings(QWidget):
         }
         self.box = [spin(0, 1, 0.05) for _ in range(4)]
         f = self.fields
+        # a mode switch, like the tray item: applies at once, no Save needed (activated: user picks only, not load())
+        f["control_mode"].activated.connect(lambda: self.app.set_control_mode(get(f["control_mode"])))
 
         # Preview tab: camera picker, live image, status
         self.preview = QLabel("Starting camera...")
@@ -295,6 +297,12 @@ class Settings(QWidget):
         calibrated = len(cfg["monitor_gaze"])
         self.monitor_note.setText(f"Calibrated for {calibrated} monitors." if calibrated >= 2 else "Not calibrated yet.")
         self.put_mappings(cfg["mappings"])
+        self.unchanged = self.edits()
+
+    def edits(self):
+        """What the widgets hold, to spot unsaved changes. Control mode applies at once, so it never counts."""
+        cfg = self.read()
+        return [cfg[key] for key in [*self.fields, "box", "modes", "mappings"] if key != "control_mode"]
 
     def put_mappings(self, mappings):
         for name, kind, value, cooldown, repeat in self.rows:
@@ -320,10 +328,12 @@ class Settings(QWidget):
         errors = config.validate(cfg)
         if errors:
             QMessageBox.warning(self, "Fix these settings", "\n".join(errors))
-            return
+            return False
         config.save(cfg)
         set_autostart(cfg["autostart"])
         self.app.apply(cfg)
+        self.unchanged = self.edits()
+        return True
 
     def show_frame(self, image, text):
         self.preview.setPixmap(QPixmap.fromImage(image))
@@ -336,6 +346,13 @@ class Settings(QWidget):
         self.app.tracker.preview = False
 
     def closeEvent(self, event):
+        if self.edits() != self.unchanged:  # closing quits, so unsaved changes would be lost silently
+            buttons = QMessageBox.StandardButton
+            answer = QMessageBox.question(self, "handctl", "Save your changes before quitting?",
+                                          buttons.Save | buttons.Discard | buttons.Cancel)
+            if answer == buttons.Cancel or (answer == buttons.Save and not self.save()):
+                event.ignore()
+                return
         event.accept()
         QApplication.instance().quit()  # closing the settings window quits the app; minimizing doesn't
 
@@ -374,7 +391,9 @@ class App:
         cfg = {**self.cfg, "control_mode": mode}
         config.save(cfg)
         self.apply(cfg)
-        self.settings.load(cfg)
+        # only these two widgets: a full load() would throw away edits not saved yet
+        self.settings.fields["control_mode"].setCurrentText(mode)
+        self.settings.set_picker.setCurrentIndex(1 if mode == "actions" else 0)
 
     def run_wizard(self):
         self.show_settings()

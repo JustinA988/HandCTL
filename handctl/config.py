@@ -77,8 +77,8 @@ _ACTION_CORE = {
     "Hand": {"type": "none", "value": ""},  # relaxed hand: nothing happens
     "Pinch": _keys("<cmd>+<shift>+s", 1500),  # screenshot
     "Closed_Fist": _keys("<cmd>+h", 1500),  # voice typing
-    "Thumb_Up": _keys("<ctrl>+<tab>", 500),  # next tab
-    "Thumb_Down": _keys("<ctrl>+<shift>+<tab>", 500),  # previous tab
+    "Thumb_Up": _keys("<ctrl>+<tab>", 800, repeat=True),  # next tab; keep holding to walk through tabs
+    "Thumb_Down": _keys("<ctrl>+<shift>+<tab>", 800, repeat=True),  # previous tab
     "Victory": _keys("<media_play_pause>", 800),
     "ILoveYou": _keys("<alt>+<tab>", 800),  # switch app
 }
@@ -92,11 +92,11 @@ MAPPINGS[ACTION_PREFIX + "Media/Thumb_Up"] = _keys("<media_volume_up>", 150, rep
 MAPPINGS[ACTION_PREFIX + "Media/Thumb_Down"] = _keys("<media_volume_down>", 150, repeat=True)
 
 DEFAULTS = {
-    "version": 4,  # bump when mapping names change; load() then adds the new defaults (and resets very old settings)
+    "version": 5,  # bump when mapping names change; load() then adds the new defaults (and resets very old settings)
     "camera": 0,
     "hand": "Right",  # with both hands in view, this one moves the cursor and the other one picks the mode
     "control_mode": "cursor",  # "cursor": the hand moves the cursor; "actions": it never does, and only triggers actions
-    "action_hold_ms": 250,  # action-only mode: how long any pose must be held, so a stray one can't fire a screenshot
+    "action_hold_ms": 150,  # action-only mode: how long any pose must be held (replayed: 100 let a relaxed hand fire)
     "hand_mode": "auto",  # "auto": one hand in view does everything, two split the work; "one": only ever one hand
     "wizard_done": False,  # the first-run setup wizard opens until this is true
     "mirror": True,
@@ -136,6 +136,14 @@ def load(path=PATH):
         data.pop("mappings", None)  # version 2 and earlier used other gesture names
         data.pop("wizard_done", None)  # what the wizard calibrates changed, so offer it once more
     # version 3 -> 4 only added mappings and modes: the user's own mappings stay, and the new ones are filled in below
+    if version == 4:  # 4 -> 5: action-only defaults changed; drop the old ones (left as they came) so the new ones apply
+        if data.get("action_hold_ms") == 250:
+            data.pop("action_hold_ms")
+        saved_mappings = data.get("mappings") if isinstance(data.get("mappings"), dict) else {}
+        for name, combo in (("A:Thumb_Up", "<ctrl>+<tab>"), ("A:Thumb_Down", "<ctrl>+<shift>+<tab>")):
+            m = saved_mappings.get(name)
+            if isinstance(m, dict) and (m.get("value"), m.get("cooldown_ms"), m.get("repeat", False)) == (combo, 500, False):
+                del saved_mappings[name]
     data["version"] = DEFAULTS["version"]
     if data.get("hand_mode") in ("single", "two"):
         # older values. "single" was the default, not a choice, and only ever tracked one hand; "auto" now tracks both

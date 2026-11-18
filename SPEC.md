@@ -141,5 +141,12 @@ Measured on one user's camera (guided recording of 1,839 frames, replayed throug
 
 `control_mode: "actions"` (Settings > Hands, or the tray menu). The hand never aims: `Engine._pick` looks only at `A:`-prefixed mappings (`A:Pinch`, `A:Edit/Pinch`, ...), which are kept next to the cursor mappings in the same dictionary, so settings files from earlier versions simply gain them and switching modes loses nothing. No fallback to a cursor mapping. Every pose waits `action_hold_ms` (250) instead of the quick 60 ms pinch and 100 ms pose holds, because with nothing being aimed there is no reason to hurry and a stray pinch would fire a screenshot. One hand, on the poses that tested reliable: pinch = screenshot, fist = voice typing, thumbs up/down = next/previous tab, peace sign = play/pause, "I love you" = switch app. The two-hand modes are copied over (`A:Edit/...` etc.) with Media's thumbs set to volume. Verified by replaying the recorded session in this mode: no actions in the no-hands, open-hand, both-hands-open and near-face phases; one screenshot from the repeated pinches (cooldown 1.5 s), one voice-typing from the held fist, two copies in Edit mode. Not verified live.
 
+#### 3.3: action-only fixes
+
+- Picking a control mode in Settings applied nothing until Save & apply, and closing the window quits without saving, so the switch looked broken (the tester's saved file still said `cursor`). The Control mode dropdown now applies and saves at once, like the tray item, without saving or discarding other edits in the window. Closing the window with unsaved edits asks Save / Discard / Cancel.
+- `action_hold_ms` 250 -> 150. Replaying the recorded session in action-only mode: 150 fires nothing in the no-hands, open-hand, both-open and near-face phases, and the index pinch fires sooner; 100 fired voice typing from a relaxed open hand.
+- Action-only thumbs repeat while held (cooldown 800 ms), so a held thumb walks through tabs.
+- Settings version 5: version-4 files that still hold the old untouched values (hold 250, thumbs 500 ms without repeat) get the new ones; changed values stay.
+
 ### v4
 - Recording custom poses in settings, optional second camera, voice commands, gesture profile import/export, wake-gesture / hold-to-act activation, macOS then Linux.

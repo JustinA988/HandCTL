@@ -113,7 +113,7 @@ Settings saved by an earlier version keep your camera, calibration and your own 
 
 ### Action-only mode
 
-For when you don't want the hand moving the cursor at all. Switch it in **Settings → Hands → Control mode: actions**, or from the tray icon's menu (**Action-only mode**). The hand never moves the cursor, clicks or scrolls; gestures only trigger actions. Because nothing is being aimed, every pose has to be held for a quarter of a second (a slider under Gesture tuning), so a stray fist or pinch can't fire an action, and nothing happens at all while you just wave a relaxed hand about.
+For when you don't want the hand moving the cursor at all. Switch it in **Settings → Hands → Control mode: actions**, or from the tray icon's menu (**Action-only mode**). Either one takes effect straight away, with no Save needed. The hand never moves the cursor, clicks or scrolls; gestures only trigger actions. Every pose has to be held for 0.15 s (a slider under Gesture tuning), so a stray fist or pinch can't fire an action, and nothing happens at all while you just wave a relaxed hand about. Hold a thumb up or down to keep moving through tabs, one every 0.8 s.
 
 One hand does the common ones:
 
@@ -121,8 +121,8 @@ One hand does the common ones:
 |---|---|
 | Pinch thumb + index | Screenshot |
 | Fist | Voice typing |
-| Thumbs up | Next tab |
-| Thumbs down | Previous tab |
+| Thumbs up | Next tab (hold to keep going) |
+| Thumbs down | Previous tab (hold to keep going) |
 | Peace sign | Play/pause |
 | "I love you" sign | Switch app |
 
