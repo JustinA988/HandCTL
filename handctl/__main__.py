@@ -21,9 +21,10 @@ from .wizard import MonitorCalibration, Wizard
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 CONTROL_HELP = (
-    "Cursor: your hand moves the cursor and clicks. Actions: it never does; gestures only trigger actions (screenshot, "
-    "voice typing, change tab, ...), with the common ones on one hand and the rest on two. You can also switch from the "
-    "tray menu. The Gestures tab has a separate set of gestures for each, so editing one never changes the other."
+    "Actions (the default): gestures only trigger actions and never move the cursor. Simple ones are a single sign "
+    "(peace sign = play/pause); ones with a direction are a sign plus a movement (pinch and move left/right = change tab, "
+    "point and move up/down = scroll). Cursor (optional): your hand moves the cursor and clicks. This applies at once; "
+    "you can also switch from the tray menu. The Gestures tab has a separate set of gestures for each."
 )
 HANDS_HELP = (
     "Auto: both hands are tracked. With one hand in view, it does everything (the core gestures). With both in view, "
@@ -40,8 +41,11 @@ GESTURES_HELP = (
     "shell: any command (only runs if enabled under Settings > General)."
 )
 MONITORS_HELP = (
-    "With two or more monitors, your hand controls the monitor you are looking at, and the cursor jumps to it when "
-    "you look across. Both head turns and eye movement count.\n"
+    "With two or more monitors, the monitor you look at becomes the one you control. With 'bring its window to the front' "
+    "on, its front window gets the keyboard (Windows puts you back in the text box you last used there) and the cursor "
+    "goes to that window's middle. A switch waits until a gesture you are making is finished, so the two never fight.\n"
+    "Follow: eyes = head turns and eye movement; head = head turns only (steadier if your eyes are lost often; turn your "
+    "head toward each monitor). Switch delay: how long a look must last. Switch threshold: lower = needs a clearer look.\n"
     "Calibration shows a window on each monitor in turn: look at each one for a few seconds. Your face has to stay "
     "visible to the camera, so a monitor you can only see by turning away from the camera is left out. "
     "Calibrate again if you move the camera or your monitors."
@@ -160,7 +164,9 @@ class Settings(QWidget):
             "toggle_hotkey": QLineEdit(),
             "shell_enabled": QCheckBox("Allow gestures to run shell commands"),
             "autostart": QCheckBox("Start with Windows"),
-            "monitor_switch": QCheckBox("Move the cursor to the monitor I look at"),
+            "monitor_switch": QCheckBox("Switch to the monitor I look at"),
+            "gaze_source": combo(["eyes", "head"]), "monitor_focus": QCheckBox("Bring its window to the front"),
+            "monitor_dwell_ms": Slider(100, 2000, 50, 0), "monitor_margin": Slider(0.3, 1, 0.05, 2),
         }
         self.box = [spin(0, 1, 0.05) for _ in range(4)]
         f = self.fields
@@ -229,7 +235,9 @@ class Settings(QWidget):
         self.monitor_note = QLabel()
         calibrate = QPushButton("Calibrate monitors")
         calibrate.clicked.connect(lambda: self.app.calibrate_monitors())
-        sub.addTab(form(f["monitor_switch"], self.monitor_note, calibrate, MONITORS_HELP), "Monitors")
+        sub.addTab(form(f["monitor_switch"], ("Follow", f["gaze_source"]), f["monitor_focus"],
+                        ("Switch delay (ms)", f["monitor_dwell_ms"]), ("Switch threshold", f["monitor_margin"]),
+                        self.monitor_note, calibrate, MONITORS_HELP), "Monitors")
         sub.addTab(form(("Toggle hotkey", f["toggle_hotkey"]), f["shell_enabled"], f["autostart"], wizard), "General")
 
         tabs = QTabWidget()
@@ -245,10 +253,11 @@ class Settings(QWidget):
 
     def groups_for(self, prefix):
         """Tabs of tables: the core gestures, then one per mode. prefix picks the cursor-mode or action-only set."""
+        motions = config.MOTIONS if prefix else []  # pinch-and-move swipes exist in action mode only
         groups = QTabWidget()
-        groups.addTab(self.table_for([prefix + pose for pose in config.POSE_NAMES]), "Core")
+        groups.addTab(self.table_for([prefix + pose for pose in config.POSE_NAMES + motions]), "Core")
         for mode in config.MODES:
-            groups.addTab(self.table_for([f"{prefix}{mode}/{pose}" for pose in config.SLOTS]), mode)
+            groups.addTab(self.table_for([f"{prefix}{mode}/{pose}" for pose in config.SLOTS + motions]), mode)
         return groups
 
     def show_set(self, index):
@@ -294,8 +303,9 @@ class Settings(QWidget):
         for mode, box in self.mode_poses.items():
             box.setCurrentText(cfg["modes"][mode])
         self.set_picker.setCurrentIndex(1 if cfg["control_mode"] == "actions" else 0)  # show the set that is in use
-        calibrated = len(cfg["monitor_gaze"])
-        self.monitor_note.setText(f"Calibrated for {calibrated} monitors." if calibrated >= 2 else "Not calibrated yet.")
+        eyes, head = len(cfg["monitor_gaze"]), len(cfg["monitor_head"])
+        self.monitor_note.setText(f"Calibrated monitors: {eyes} for eyes, {head} for head. "
+                                  + ("Calibrate again to use head." if head < 2 <= eyes else ""))
         self.put_mappings(cfg["mappings"])
         self.unchanged = self.edits()
 

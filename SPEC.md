@@ -148,5 +148,14 @@ Measured on one user's camera (guided recording of 1,839 frames, replayed throug
 - Action-only thumbs repeat while held (cooldown 800 ms), so a held thumb walks through tabs.
 - Settings version 5: version-4 files that still hold the old untouched values (hold 250, thumbs 500 ms without repeat) get the new ones; changed values stay.
 
+#### 3.4: action mode by default, motion gestures, steadier monitor switching
+
+- `control_mode` defaults to `"actions"`; cursor mode is optional. Saved settings keep the user's choice.
+- New pose `Point`: index finger straight (ext >= CURLED + 0.1), the other three curled (< CURLED). Checked before the fist, whose mean-ext test it would otherwise pass; a pointing finger also ends a held fist. Cursor mode maps it to `move` (pointing used to read as a fist and scroll); action mode to `scroll`.
+- Action-mode pinch is a tap or a swipe: on entering a pinch nothing fires; while it is held, every `SWIPE` (0.12 of the cursor area) travelled fires `Swipe_Left/Right/Up/Down` (tabs, task view, show desktop), the first step locking the axis; letting go fires the plain `Pinch` mapping (screenshot) only if no swipe fired. Thumbs are volume (repeat) again; tabs moved to swipes.
+- Monitor switching: `gaze_source` `eyes` | `head` (head yaw only); one calibration run stores both (`monitor_gaze`, `monitor_head`), the look signal carrying (yaw, pitch, head yaw). The selector takes the per-axis median of the last three readings, with user-set `monitor_dwell_ms` and `monitor_margin`. A switch is deferred while any engine is `busy()` (a pose other than a resting or cursor-moving hand) or a mode is held, then happens at the next reading. `monitor_focus` (default on): `look_at` brings the frontmost ordinary window centred on that monitor to the front (EnumWindows z-order, skipping tool, click-through, no-activate and cloaked windows; AttachThreadInput to get past the foreground lock) and centres the cursor on it, clipped to the monitor.
+- Settings version 6: untouched 3.2/3.3 action thumb mappings are replaced by the new defaults.
+- Verified: unit tests (93), a replay of the recorded session in action mode (no actions with no hands, open hand, both open or near the face; no swipes from repeated in-place pinches; Point seen in 2 frames of the fist phase, too short to act), and bringing a window on another monitor to the front from a background process on the dev machine. Not verified live with hands or eyes.
+
 ### v4
 - Recording custom poses in settings, optional second camera, voice commands, gesture profile import/export, wake-gesture / hold-to-act activation, macOS then Linux.

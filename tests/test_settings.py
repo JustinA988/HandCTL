@@ -47,9 +47,9 @@ def test_every_gesture_has_a_row_and_mode_poses_can_be_changed(fake_app):
 def test_control_mode_switch_and_the_two_gesture_sets(fake_app):
     from handctl.__main__ import Settings
     s = Settings(fake_app)
-    assert s.set_picker.currentIndex() == 0 and not s.sets[0].isHidden() and s.sets[1].isHidden()  # cursor gestures shown
-    s.set_picker.setCurrentIndex(1)
-    assert s.sets[0].isHidden() and not s.sets[1].isHidden()
+    assert s.set_picker.currentIndex() == 1 and s.sets[0].isHidden() and not s.sets[1].isHidden()  # action mode is the default
+    s.set_picker.setCurrentIndex(0)
+    assert not s.sets[0].isHidden() and s.sets[1].isHidden()
     s.fields["control_mode"].setCurrentText("actions")
     row = next(r for r in s.rows if r[0] == "A:Pinch")  # the action-only set is editable and independent of the cursor set
     assert row[1].currentText() == "keys" and row[2].text() == "<cmd>+<shift>+s"

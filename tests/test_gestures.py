@@ -10,8 +10,9 @@ from handctl.gestures import FINGERS, Classifier, Engine, ModeSelector, OneEuro,
 
 
 def cfg(**overrides):
+    """Default settings, but in cursor mode (most tests here are about it); action-mode tests pass control_mode="actions"."""
     c = copy.deepcopy(config.DEFAULTS)
-    c.update(overrides)
+    c.update({"control_mode": "cursor", **overrides})
     return c
 
 
@@ -279,20 +280,22 @@ def test_action_only_mode_never_moves_or_clicks_and_needs_a_longer_hold():
     assert config.DEFAULTS["action_hold_ms"] == 150
     assert run(e, hold("Hand", 0, 1.0, (0.2, 0.2)) + hold("Hand", 1.0, 2.0, (0.8, 0.8))) == []  # a hand waving about does nothing
     assert run(e, hold("Pinch", 2.0, 2.1)) == []  # a pinch shorter than the hold is ignored: no stray screenshot
-    assert runs(run(e, hold("Pinch", 2.2, 2.6))) == ["<cmd>+<shift>+s"]
-    events = run(e, hold("Hand", 2.6, 3.0) + hold("Pinch", 3.0, 3.6) + hold("Hand", 3.6, 4.0))
+    assert runs(run(e, hold("Pinch", 2.2, 2.6))) == []  # a pinch acts when let go, as it might still become a swipe
+    assert runs(run(e, hold("Hand", 2.6, 2.6))) == []
+    assert runs(run(e, hold("Hand", 2.6, 2.9))) == ["<cmd>+<shift>+s"]
+    events = run(e, hold("Hand", 2.9, 3.0) + hold("Pinch", 3.0, 3.6) + hold("Hand", 3.6, 4.0))
     assert set(kinds(events)) <= {"run"} and "press" not in kinds(events)  # a click would be a press
 
 
 def test_action_only_one_hand_quick_actions():
-    expected = {"Pinch": "<cmd>+<shift>+s", "Closed_Fist": "<cmd>+h", "Thumb_Up": "<ctrl>+<tab>",
-                "Thumb_Down": "<ctrl>+<shift>+<tab>", "Victory": "<media_play_pause>", "ILoveYou": "<alt>+<tab>"}
-    for pose, combo in expected.items():
+    expected = {"Pinch": "<cmd>+<shift>+s", "Closed_Fist": "<cmd>+h", "Victory": "<media_play_pause>", "ILoveYou": "<alt>+<tab>"}
+    for pose, combo in expected.items():  # single signs, fired once (the pinch when let go)
         e = Engine(actions_cfg())
-        got = runs(run(e, hold("Hand", 0, 0.3) + hold(pose, 0.3, 0.8)))
+        got = runs(run(e, hold("Hand", 0, 0.3) + hold(pose, 0.3, 0.8) + hold("Hand", 0.8, 1.1)))
         assert got == [combo], (pose, got)
-    # holding a thumb keeps walking through tabs, one every 0.8 s
-    assert runs(run(Engine(actions_cfg()), hold("Hand", 0, 0.3) + hold("Thumb_Up", 0.3, 2.0))) == ["<ctrl>+<tab>"] * 2
+    for pose, key in (("Thumb_Up", "<media_volume_up>"), ("Thumb_Down", "<media_volume_down>")):  # volume, repeating
+        got = runs(run(Engine(actions_cfg()), hold("Hand", 0, 0.3) + hold(pose, 0.3, 1.0)))
+        assert set(got) == {key} and len(got) >= 3, (pose, got)
     # even a fist, which scrolls in cursor mode, doesn't scroll here
     e = Engine(actions_cfg())
     events = run(e, [(i * 0.033, "Closed_Fist", (0.5, 0.8 - i * 0.01)) for i in range(40)])
@@ -302,11 +305,66 @@ def test_action_only_one_hand_quick_actions():
 def test_action_only_modes_carry_the_less_common_actions():
     e = Engine(actions_cfg())
     e.mode = "Edit"
-    assert runs(run(e, hold("Pinch", 0, 0.5))) == ["<ctrl>+c"]
+    assert runs(run(e, hold("Pinch", 0, 0.5) + hold("Hand", 0.5, 0.8))) == ["<ctrl>+c"]
     e = Engine(actions_cfg())
     e.mode = "Media"
-    events = run(e, hold("Thumb_Up", 0, 1.2))  # thumbs are tabs on their own, but volume inside Media mode
+    events = run(e, hold("Thumb_Up", 0, 1.2))  # Media mode doesn't change the thumbs: still volume
     assert set(runs(events)) == {"<media_volume_up>"} and len(runs(events)) >= 3
+
+
+def pinch_moving(t0, start, end, steps=20):
+    """A pinch held still for 0.3 s, then moved in a straight line from start to end (image coordinates)."""
+    still = hold("Pinch", t0, t0 + 0.3, start)
+    return still + [(t0 + 0.3 + i * 0.033, "Pinch", (start[0] + (end[0] - start[0]) * i / steps,
+                                                      start[1] + (end[1] - start[1]) * i / steps)) for i in range(1, steps + 1)]
+
+
+def test_action_mode_pinch_and_move_swipes_instead_of_taking_a_screenshot():
+    e = Engine(actions_cfg())
+    got = runs(run(e, pinch_moving(0, (0.5, 0.5), (0.75, 0.52)) + hold("Hand", 1.0, 1.3, (0.75, 0.52))))
+    assert got and set(got) == {"<ctrl>+<tab>"}  # moved right: next tab (one per step), and no screenshot on letting go
+    e = Engine(actions_cfg())
+    got = runs(run(e, pinch_moving(0, (0.5, 0.5), (0.33, 0.5)) + hold("Hand", 1.0, 1.3, (0.33, 0.5))))
+    assert got and set(got) == {"<ctrl>+<shift>+<tab>"}
+    for end, key in (((0.52, 0.3), "<cmd>+<tab>"), ((0.5, 0.7), "<cmd>+d")):  # up: task view; down: show desktop
+        got = runs(run(Engine(actions_cfg()), pinch_moving(0, (0.5, 0.5), end) + hold("Hand", 1.0, 1.3, end)))
+        assert got == [key], (end, got)  # the long cooldown keeps it to one, so the toggle doesn't undo itself
+    # sideways, then drifting down: the first step picked the sideways axis, so no show-desktop
+    e = Engine(actions_cfg())
+    got = runs(run(e, pinch_moving(0, (0.5, 0.4), (0.7, 0.4)) + pinch_moving(1.0, (0.7, 0.4), (0.7, 0.7))))
+    assert "<cmd>+d" not in got and "<ctrl>+<tab>" in got
+    # a pinch that only wobbles a little is a screenshot
+    wobble = [(i * 0.033, "Pinch", (0.5 + 0.01 * (i % 3), 0.5)) for i in range(20)]
+    assert runs(run(Engine(actions_cfg()), wobble + hold("Hand", 0.7, 1.0))) == ["<cmd>+<shift>+s"]
+
+
+def test_action_mode_point_and_move_scrolls():
+    e = Engine(actions_cfg())
+    events = run(e, [(i * 0.033, "Point", (0.5, 0.7 - i * 0.01)) for i in range(40)])  # finger up, hand moving up
+    scrolls = [ev[1] for ev in events if ev[0] == "scroll"]
+    assert scrolls and all(s > 0 for s in scrolls) and "move" not in kinds(events)
+    plain = Engine(cfg())  # in cursor mode pointing moves the cursor, like an open hand
+    assert "move" in kinds(run(plain, hold("Point", 0, 0.3)))
+
+
+def test_pointing_is_its_own_pose_not_a_fist():
+    c = Classifier(cfg())
+    assert c("None", 0.0, world(curl="mrp"))[0] == "Point"
+    assert c("None", 0.0, world(curl="imrp"))[0] == "Closed_Fist"
+    assert c("None", 0.0, world(curl="mrp"))[0] == "Point"  # a held fist ends when the index finger straightens
+
+
+def test_busy_while_a_gesture_is_under_way():
+    e = Engine(actions_cfg())
+    run(e, hold("Hand", 0, 0.3))
+    assert not e.busy()  # a resting hand
+    run(e, hold("Pinch", 0.3, 0.6))
+    assert e.busy()
+    cursor = Engine(cfg())
+    run(cursor, hold("Hand", 0, 0.3))
+    assert not cursor.busy()  # moving the cursor isn't a gesture to protect
+    run(cursor, hold("Closed_Fist", 0.3, 0.7))
+    assert cursor.busy()  # scrolling is
 
 
 def test_action_only_mode_never_falls_back_to_a_cursor_mapping():
@@ -393,7 +451,7 @@ def test_default_smoothing_balances_steadiness_and_lag():
 def test_defaults_are_valid_and_bad_values_rejected():
     assert config.validate(cfg()) == []
     assert set(config.DEFAULTS["mappings"]) <= set(config.GESTURES + config.ACTION_GESTURES)  # empty slots fall back to the core action
-    assert len(config.GESTURES) == 10 + 5 * 9 and all(f"{m}/Pinch" in config.DEFAULTS["mappings"] for m in config.MODES)
+    assert len(config.GESTURES) == 11 + 5 * 10 and all(f"{m}/Pinch" in config.DEFAULTS["mappings"] for m in config.MODES)
     c = cfg(hand_mode="three")
     c["box"] = [0.5, 0, 0.5, 1]
     c["mappings"]["Victory"]["value"] = "<notakey>"
@@ -454,14 +512,14 @@ def test_mode_poses_are_validated_and_a_damaged_table_costs_nothing_else(tmp_pat
 
 def test_control_mode_is_validated_and_action_only_mappings_never_aim_the_cursor(tmp_path):
     assert any("Control mode" in e for e in config.validate(cfg(control_mode="mouse")))
-    aiming = {"move", "left", "right", "middle", "scroll", "hscroll"}
+    aiming = {"move", "left", "right", "middle"}  # scrolling is fine: it scrolls wherever the cursor is, never aims it
     assert not [n for n, m in config.DEFAULTS["mappings"].items()
                 if n.startswith(config.ACTION_PREFIX) and m["type"] == "mouse" and m["value"] in aiming]
     p = tmp_path / "config.json"  # a settings file from before action-only mode gains it without changing anything else
     mine = {"type": "keys", "value": "<ctrl>+<alt>+t", "cooldown_ms": 700}
     p.write_text(json.dumps({"version": 4, "camera": 1, "wizard_done": True, "mappings": {"Victory": mine}}))
     loaded = config.load(p)
-    assert loaded["control_mode"] == "cursor" and loaded["mappings"]["Victory"] == mine and loaded["camera"] == 1
+    assert loaded["control_mode"] == "actions" and loaded["mappings"]["Victory"] == mine and loaded["camera"] == 1
     assert loaded["mappings"]["A:Pinch"] == config.DEFAULTS["mappings"]["A:Pinch"]
 
 

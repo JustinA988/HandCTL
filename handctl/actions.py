@@ -49,8 +49,61 @@ def monitor_at(x, y, rects):
     return next((name for name, (l, t, w, h) in rects.items() if l <= x < l + w and t <= y < t + h), None)
 
 
-def look_at(name):
+_user32 = ctypes.WinDLL("user32")  # own copy, so the argtypes set below can't affect pynput's calls
+_user32.GetForegroundWindow.restype = wintypes.HWND
+_user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.c_void_p]
+for _f in ("SetForegroundWindow", "BringWindowToTop", "IsWindowVisible", "IsIconic", "GetWindowTextLengthW"):
+    getattr(_user32, _f).argtypes = [wintypes.HWND]
+_user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+_user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+_user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
+_SKIP_STYLES = 0x80 | 0x20 | 0x08000000  # tool windows, click-through overlays, windows that never take focus
+
+
+def top_window(rect):
+    """(handle, (left, top, right, bottom)) of the frontmost ordinary window centred on the monitor `rect`, or None."""
+    # shortcut: Windows-only (EnumWindows lists top-level windows front to back); replace when porting to macOS/Linux
+    found = []
+
+    def visit(hwnd, _data):
+        if (not _user32.IsWindowVisible(hwnd) or _user32.IsIconic(hwnd) or not _user32.GetWindowTextLengthW(hwnd)
+                or _user32.GetWindowLongW(hwnd, -20) & _SKIP_STYLES):  # -20: extended styles
+            return 1
+        cloaked = wintypes.DWORD()  # hidden store apps and windows on other virtual desktops report visible but cloaked
+        ctypes.windll.dwmapi.DwmGetWindowAttribute(wintypes.HWND(hwnd), 14, ctypes.byref(cloaked), 4)
+        r = wintypes.RECT()
+        _user32.GetWindowRect(hwnd, ctypes.byref(r))
+        if not cloaked.value and monitor_at((r.left + r.right) // 2, (r.top + r.bottom) // 2, {"m": rect}):
+            found.append((hwnd, (r.left, r.top, r.right, r.bottom)))
+            return 0  # the frontmost one is enough
+        return 1
+
+    callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    _user32.EnumWindows(callback(visit), 0)
+    return found[0] if found else None
+
+
+def bring_to_front(hwnd):
+    """Give `hwnd` the keyboard: Windows then puts the typing cursor back in the box last used in that window.
+    Windows only lets the app the user is using take focus, so this briefly joins that app's input queue."""
+    front = _user32.GetForegroundWindow()
+    if front == hwnd:
+        return
+    me = ctypes.windll.kernel32.GetCurrentThreadId()
+    other = _user32.GetWindowThreadProcessId(front, None) if front else 0
+    joined = other and other != me and _user32.AttachThreadInput(me, other, True)
+    try:
+        _user32.SetForegroundWindow(hwnd)
+        _user32.BringWindowToTop(hwnd)
+    finally:
+        if joined:
+            _user32.AttachThreadInput(me, other, False)
+
+
+def look_at(name, focus=False):
     """Make `name` the monitor the hand controls and carry the cursor to the same relative spot on it.
+    focus=True instead brings that monitor's front window to the front and puts the cursor in its middle, so typing and
+    gestures go straight to what the user looks at.
     name None turns monitor switching off: the hand maps to the whole desktop again."""
     global active
     rects = monitors()
@@ -60,7 +113,15 @@ def look_at(name):
     x, y = mouse.position
     old = active if active in rects.values() else rects.get(monitor_at(x, y, rects))
     active = rects[name]
-    if old and old != active:
+    if focus:
+        left, top, width, height = active
+        window = top_window(active)
+        if window:
+            bring_to_front(window[0])
+            wl, wt, wr, wb = window[1]  # its middle, kept on this monitor if the window spills over
+            left, top, width, height = max(wl, left), max(wt, top), min(wr, left + width) - max(wl, left), min(wb, top + height) - max(wt, top)
+        mouse.position = (left + width // 2, top + height // 2)
+    elif old and old != active:
         fx = min(max((x - old[0]) / max(old[2] - 1, 1), 0.0), 1.0)
         fy = min(max((y - old[1]) / max(old[3] - 1, 1), 0.0), 1.0)
         mouse.position = (active[0] + round(fx * (active[2] - 1)), active[1] + round(fy * (active[3] - 1)))

@@ -1,6 +1,7 @@
 """Where the user is looking, from MediaPipe face landmarks, and which monitor that means. Pure logic: no camera or OS calls."""
 import math
 import statistics
+from collections import deque
 
 # MediaPipe face-mesh landmark indices. "Left" and "right" here mean left and right in the image.
 EYES = ((33, 133, 468), (362, 263, 473))  # each eye: image-left corner, image-right corner, iris centre
@@ -11,15 +12,18 @@ MIN_SAMPLES = 8  # gaze readings needed per monitor for a calibration to count
 MIN_APART = 8.0  # degrees: calibrated monitors closer than this can't be told apart reliably
 
 
-def gaze(lm, width, height):
+def gaze(lm, width, height, eyes=True):
     """(yaw, pitch) in degrees of the line of sight relative to the camera: positive yaw = toward image right,
     positive pitch = downward. lm: MediaPipe face landmarks as normalized (x, y, z); z has x's scale, smaller = closer.
-    Yaw adds eye rotation to head rotation, so a glance and a head turn toward the same monitor read the same.
+    Yaw adds eye rotation to head rotation, so a glance and a head turn toward the same monitor read the same;
+    eyes=False leaves the eyes out: head turn only, steadier when the eyes are hard to read.
     shortcut: pitch is head-only (eyelids make vertical iris position unreliable); add eye pitch if stacked monitors need it."""
     p = [(x * width, y * height, z * width) for x, y, z in lm]
     a, b = p[OUTER[0]], p[OUTER[1]]
     head_yaw = math.atan2(b[2] - a[2], b[0] - a[0])  # the image-right eye corner sits farther away when turned right
     head_pitch = math.atan2(p[CHIN][2] - p[TOP][2], p[CHIN][1] - p[TOP][1])  # the chin sits farther away when looking down
+    if not eyes:
+        return math.degrees(head_yaw), math.degrees(head_pitch)
     offsets = []
     for left, right, iris in EYES:
         ax, ay = p[right][0] - p[left][0], p[right][1] - p[left][1]
@@ -71,29 +75,34 @@ def calibrate(samples, label=str):
 
 
 class Selector:
-    """Picks the monitor being looked at: the calibrated point nearest the current gaze. Two guards stop it flapping
-    on glances and noise: the new monitor must be clearly nearer (MARGIN) and stay so for DWELL seconds."""
+    """Picks the monitor being looked at: the calibrated point nearest the current gaze. Three guards stop it flapping
+    on glances and noise: each reading is the median of the last three (one bad reading, a blink, is ignored), the new
+    monitor must be clearly nearer (margin) and it must stay so for dwell seconds."""
     MARGIN = 0.75
     DWELL = 0.4
 
-    def __init__(self, points, current=None):
+    def __init__(self, points, current=None, dwell=DWELL, margin=MARGIN):
         """points: {monitor: (yaw, pitch)} from calibrate(); current: the monitor in use now, if known."""
-        self.points, self.current = points, current
+        self.points, self.current, self.dwell, self.margin = points, current, dwell, margin
         self.candidate, self.since = None, 0.0
+        self.recent = deque(maxlen=3)
 
     def update(self, t, look):
         """look: (yaw, pitch), or None when no face is visible. Returns the monitor to use (None if never determined)."""
         if look is None or len(self.points) < 2:
             self.candidate = None
+            self.recent.clear()
             return self.current
+        self.recent.append(look)
+        look = tuple(statistics.median(axis) for axis in zip(*self.recent))
         dist = {name: math.dist(look, point) for name, point in self.points.items()}
         best = min(dist, key=dist.get)
         if self.current not in dist:
             self.current = best  # nothing to switch away from yet
-        if best == self.current or dist[best] > self.MARGIN * dist[self.current]:
+        if best == self.current or dist[best] > self.margin * dist[self.current]:
             self.candidate = None
         elif best != self.candidate:
             self.candidate, self.since = best, t
-        elif t - self.since >= self.DWELL:
+        elif t - self.since >= self.dwell:
             self.current, self.candidate = best, None
         return self.current

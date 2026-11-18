@@ -15,7 +15,7 @@ from mediapipe.tasks.python.vision import (
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QImage
 
-from . import actions
+from . import actions, config
 from .gaze import Selector, face_box, face_part, gaze
 from .gestures import GRACE, Classifier, Engine, ModeSelector, anchor, assign, cut_off
 
@@ -67,7 +67,7 @@ class HandCount:
 class Tracker(QThread):
     frame = Signal(QImage, str)
     sample = Signal(object)  # every frame: {side: {"gesture", "pos", "lm", "feat"}}, for the setup wizard
-    look = Signal(object)  # each face reading: (yaw, pitch) of the gaze, or None when no face is visible
+    look = Signal(object)  # each face reading: (yaw, pitch, head-only yaw) of the gaze, or None when no face is visible
     error = Signal(str)
     toggled = Signal(bool)
 
@@ -88,7 +88,7 @@ class Tracker(QThread):
         self.last = {}  # side -> (time, position) it was last seen at
         self.faces = (0.0, [])  # when the faces were last seen, and their boxes in the same coordinates as the hands
         self.found = 0  # hands in the last frame, after dropping phantoms
-        self.switching = cfg["monitor_switch"] and len(cfg["monitor_gaze"]) >= 2
+        self.switching = cfg["monitor_switch"] and len(cfg[config.gaze_key(cfg)]) >= 2
         self.face = face or self.switching  # whether the gaze is needed; the face is read either way
         self.selector = self.target = None  # which monitor the user looks at, once monitor switching has started
 
@@ -168,13 +168,14 @@ class Tracker(QThread):
         if not self.switching:
             return
         rects = actions.monitors()
-        points = {name: tuple(p) for name, p in self.cfg["monitor_gaze"].items() if name in rects}
+        points = {name: tuple(p) for name, p in self.cfg[config.gaze_key(self.cfg)].items() if name in rects}
         if len(points) < 2:
             self.error.emit("Monitor switching is off: fewer than two calibrated monitors are connected. "
                             "Run Settings > Monitors > Calibrate monitors again.")
             return
         self.target = actions.monitor_at(*actions.mouse.position, rects)
-        self.selector = Selector(points, self.target if self.target in points else None)
+        self.selector = Selector(points, self.target if self.target in points else None,
+                                 self.cfg["monitor_dwell_ms"] / 1000, self.cfg["monitor_margin"])
         actions.look_at(self.target)
 
     def _look(self, t, face, frame):
@@ -185,15 +186,22 @@ class Tracker(QThread):
             boxes = [(1 - x1, y0, 1 - x0, y1) for x0, y0, x1, y1 in boxes]
         if boxes:
             self.faces = (t, boxes)
-        seen = gaze([(p.x, p.y, p.z) for p in result.face_landmarks[0]], width, height) if result.face_landmarks else None
+        seen = None
+        if result.face_landmarks:
+            lm = [(p.x, p.y, p.z) for p in result.face_landmarks[0]]
+            seen = (*gaze(lm, width, height), gaze(lm, width, height, eyes=False)[0])
         self.look.emit(seen)
         if not (self.selector and self.enabled):
             return
-        target = self.selector.update(t, seen)
-        if target and target != self.target:
+        head = self.cfg["gaze_source"] == "head"
+        target = self.selector.update(t, seen and ((seen[2], seen[1]) if head else seen[:2]))
+        # the selector keeps following the eyes, but the switch waits until any gesture under way is finished, so the
+        # cursor and the window never change under a pinch, a scroll or a held mode
+        busy = self.mode or any(engine.busy() for engine in self.engines.values())
+        if target and target != self.target and not busy:
             self.target = target
             try:
-                actions.look_at(target)
+                actions.look_at(target, focus=self.cfg["monitor_focus"])
             except Exception as e:  # a failed cursor move must not kill tracking
                 logging.exception("Monitor switch failed")
                 self.error.emit(f"Monitor switch failed: {e}")

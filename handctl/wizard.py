@@ -309,10 +309,14 @@ class MonitorCalibration(QDialog):
     def finish(self):
         self.timer.stop()
         self.recording = False
-        points, problems = calibrate(self.samples, self.labels.get)
+        # each reading holds both gaze sources, (yaw, pitch, head-only yaw), so both calibrations come from one run
+        both = {"monitor_gaze": calibrate(self.samples, self.labels.get),
+                "monitor_head": calibrate({n: [(s[2], s[1]) for s in looks] for n, looks in self.samples.items()}, self.labels.get)}
+        points, problems = both[config.gaze_key(self.app.cfg)]
         if len(points) >= 2:
             self.saved = copy.deepcopy(self.app.cfg)
-            self.saved["monitor_gaze"] = {name: [round(v, 1) for v in point] for name, point in points.items()}
+            for key, (found, _) in both.items():
+                self.saved[key] = {name: [round(v, 1) for v in point] for name, point in found.items()}
             self.saved["monitor_switch"] = True
             config.save(self.saved)
             head = f"Done. The cursor now follows your gaze between {', '.join(self.labels[name] for name in points)}."

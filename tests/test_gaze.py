@@ -85,6 +85,8 @@ def desk(monkeypatch):
     monkeypatch.setattr(actions, "monitors", lambda: {"A": A, "B": B})
     monkeypatch.setattr(actions, "screen_rect", lambda: (0, -200, 1500, 1000))
     monkeypatch.setattr(actions, "active", None)
+    monkeypatch.setattr(actions, "top_window", lambda rect: None)  # never look at or focus the real windows
+    monkeypatch.setattr(actions, "bring_to_front", lambda hwnd: None)
     return mouse
 
 
@@ -127,7 +129,7 @@ def looking(head_yaw):
 
 
 FRAME = np.zeros((480, 640, 3), np.uint8)
-CALIBRATED = dict(monitor_switch=True, monitor_gaze={"A": [-20.0, 0.0], "B": [20.0, 0.0]})
+CALIBRATED = dict(monitor_switch=True, monitor_focus=False, monitor_gaze={"A": [-20.0, 0.0], "B": [20.0, 0.0]})
 
 
 def test_tracker_switches_monitor_when_the_user_looks_across(qapp, desk):
@@ -138,11 +140,38 @@ def test_tracker_switches_monitor_when_the_user_looks_across(qapp, desk):
     assert t.face and t.target == "A" and actions.active == A  # starts on the monitor the cursor is on: nothing jumps
     for now in (0.0, 0.15, 0.3):
         t._look(now, looking(20), FRAME)
-    assert t.target == "A" and seen[-1] == pytest.approx((20, 0), abs=0.2)
+    assert t.target == "A" and seen[-1] == pytest.approx((20, 0, 20), abs=0.2)  # with eyes, pitch, head only
     t._look(0.45, looking(20), FRAME)
     assert t.target == "B" and actions.active == B and desk.position == (1125, 50)
     t._look(1.0, looking(None), FRAME)
     assert t.target == "B" and seen[-1] is None  # face lost: stays on B
+
+
+def test_look_at_with_focus_brings_the_front_window_forward_and_centres_the_cursor(desk, monkeypatch):
+    fronted = []
+    monkeypatch.setattr(actions, "bring_to_front", fronted.append)
+    monkeypatch.setattr(actions, "top_window", lambda rect: ("win", (900, 0, 1300, 400)) if rect == B else None)
+    actions.look_at("B", focus=True)
+    assert fronted == ["win"] and desk.position == (1150, 200)  # the middle of the part of the window on B
+    actions.look_at("A", focus=True)
+    assert fronted == ["win"] and desk.position == (500, 250)  # no window there: the middle of the monitor
+
+
+def test_head_only_follows_the_head_turn_and_a_switch_waits_for_the_gesture(qapp, desk):
+    t = Tracker(cfg(**{**CALIBRATED, "gaze_source": "head", "monitor_head": {"A": [-20.0, 0.0], "B": [20.0, 0.0]},
+                       "monitor_gaze": {}}))
+    t._start_monitors()
+    for now in (0.0, 0.15, 0.3, 0.45, 0.6):
+        t._look(now, looking(20), FRAME)
+    assert t.target == "B"  # switched on the head turn alone
+    busy = t.engines["Right"]
+    busy.current, busy.action = "Closed_Fist", ("Closed_Fist", {"type": "mouse", "value": "scroll"})  # mid-scroll
+    for now in (1.0, 1.15, 1.3, 1.45, 1.6):
+        t._look(now, looking(-20), FRAME)
+    assert t.target == "B"  # looked back at A, but the scroll isn't finished
+    busy.current, busy.action = "Hand", None
+    t._look(1.75, looking(-20), FRAME)
+    assert t.target == "A"  # done: the switch happens straight away
 
 
 def test_tracker_does_not_switch_while_tracking_is_paused(qapp, desk):
@@ -180,11 +209,11 @@ def calibration(fake_app, monkeypatch):
         """Walk through the monitors; yaws[i] is where the user looks for monitor i (None = face not visible)."""
         dialog.next_monitor()
         for yaw in yaws:
-            dialog.on_look((99.0, 0.0))  # readings before recording starts must be ignored
+            dialog.on_look((99.0, 0.0, 99.0))  # readings before recording starts must be ignored
             time.sleep(0.04)
             dialog.tick()  # get-ready time is over: recording
             for _ in range(10):
-                dialog.on_look(None if yaw is None else (yaw, 1.0))
+                dialog.on_look(None if yaw is None else (yaw, 1.0, yaw / 2))  # the head turns about half as far
             time.sleep(0.04)
             dialog.tick()  # recording is over: next monitor, or finish
         return dialog
@@ -197,6 +226,7 @@ def test_monitor_calibration_saves_and_turns_switching_on(calibration):
     dialog = run([-30.0, 0.0, 30.0])
     saved = app.saved[-1]
     assert saved["monitor_gaze"] == {"A": [-30.0, 1.0], "B": [0.0, 1.0], "C": [30.0, 1.0]} and saved["monitor_switch"] is True
+    assert saved["monitor_head"] == {"A": [-15.0, 1.0], "B": [0.0, 1.0], "C": [15.0, 1.0]}  # head-only, from the same run
     assert config.validate(saved) == [] and "Monitor 1, Monitor 2, Monitor 3" in dialog.text.text()
     dialog.done(1)
     assert app.applied[-1] == saved and not app.calibrating and not app.force_face and app.look_hook is None

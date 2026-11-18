@@ -1,6 +1,6 @@
 # handctl
 
-Control your Windows PC with your hands in front of a webcam: move and click the mouse, scroll and control media. With several monitors, the cursor follows you to the monitor you look at. Everything runs locally on the CPU. No network calls, no accounts.
+Control your Windows PC with your hands in front of a webcam: screenshots, voice typing, tabs, scrolling and media with simple hand signs, or, optionally, move and click the mouse. With several monitors, the one you look at gets the keyboard. Everything runs locally on the CPU. No network calls, no accounts.
 
 ## Install
 
@@ -56,18 +56,44 @@ The first launch opens a setup wizard: pick your camera, mark the cursor area by
 
 Raise a hand in view of the camera with your elbow resting on the desk or chair arm; holding your whole arm out tires it quickly. Your hand doesn't have to face the camera squarely: poses are read from the hand's 3D shape, and the camera can sit above, below or beside the screen.
 
-### One hand
+### Action mode (default)
+
+Gestures trigger actions; the hand never moves the cursor or clicks. Simple actions are a single sign. Ones with a direction or an amount are a sign plus a movement. Every sign has to be held for 0.15 s (Settings → Gesture tuning), so nothing happens while you just move a relaxed hand about.
 
 | Gesture | Action |
 |---|---|
-| Any open or relaxed hand | Move cursor (it follows the centre of your palm) |
+| Pinch thumb + index, then let go | Screenshot |
+| Pinch and move left / right | Previous / next tab (one per step; keep moving for more) |
+| Pinch and move up | Task view |
+| Pinch and move down | Show desktop |
+| Point (index finger up, the others curled) and move up / down | Scroll |
+| Fist | Voice typing |
+| Thumbs up / thumbs down (hold) | Volume up / down (repeats) |
+| Peace sign | Play/pause |
+| "I love you" sign | Switch app |
+
+A pinch acts when you let go, and only if it didn't move: a pinch that moves is a swipe instead. The first step of a swipe picks its direction, so a sideways tab swipe that drifts downward won't also show the desktop.
+
+With both hands in view, the other hand picks a mode exactly as in cursor mode below (fist = Edit, thumbs up = Media, peace sign = Windows, "I love you" = Browser, thumbs down = System), for copy, paste, undo, close tab, lock screen and the rest; swipes and pointing keep their jobs in every mode. The Gestures tab keeps a separate set of gestures for each control mode (pick which to edit at the top), so changing one never changes the other.
+
+Switch control mode under **Settings → Hands → Control mode** or from the tray icon's menu; it applies at once.
+
+### Cursor mode (optional)
+
+Your hand moves the cursor and clicks.
+
+#### One hand
+
+| Gesture | Action |
+|---|---|
+| Any open or relaxed hand, or pointing | Move cursor (it follows the centre of your palm) |
 | Pinch thumb + index fingertip | Left click; keep pinching and move = drag |
 | Peace sign | Right click |
 | Fist, move up/down | Scroll |
 | Thumbs up / thumbs down (hold) | Volume up / down (repeats) |
 | "I love you" sign | Task view |
 
-### Two hands: modes
+#### Two hands: modes
 
 With both hands in view, your **main hand** (right by default; change it under Settings → Hands) keeps doing everything above. Your **other hand** holds a pose like a Shift key to pick a *mode*; while it does, the main hand's gestures do that mode's actions. Let go and everything returns to normal.
 
@@ -111,26 +137,9 @@ Settings saved by an earlier version keep your camera, calibration and your own 
 
 **Shell commands are disabled by default.** Enable them under Settings → General only if you trust every command in your mappings.
 
-### Action-only mode
-
-For when you don't want the hand moving the cursor at all. Switch it in **Settings → Hands → Control mode: actions**, or from the tray icon's menu (**Action-only mode**). Either one takes effect straight away, with no Save needed. The hand never moves the cursor, clicks or scrolls; gestures only trigger actions. Every pose has to be held for 0.15 s (a slider under Gesture tuning), so a stray fist or pinch can't fire an action, and nothing happens at all while you just wave a relaxed hand about. Hold a thumb up or down to keep moving through tabs, one every 0.8 s.
-
-One hand does the common ones:
-
-| Gesture | Action |
-|---|---|
-| Pinch thumb + index | Screenshot |
-| Fist | Voice typing |
-| Thumbs up | Next tab (hold to keep going) |
-| Thumbs down | Previous tab (hold to keep going) |
-| Peace sign | Play/pause |
-| "I love you" sign | Switch app |
-
-The less common actions are on two hands, with the same five modes as cursor mode (the other hand holds a fist, thumbs up, peace sign, "I love you" or thumbs down) and the same main-hand gestures: copy, paste, undo, close tab, show desktop, lock screen and the rest. The one difference is thumbs inside Media mode, which are volume up and down, because thumbs are tab changes on their own here. The Gestures tab keeps a separate set of gestures for each control mode (pick which to edit at the top), so changing one never changes the other, and action-only mode never falls back to a cursor gesture.
-
 ## Settings window
 
-Three tabs: **Preview** (camera picker and live image), **Gestures** (what each gesture does: Core, then one table per mode, for cursor mode or action-only mode) and **Settings**, with sub-tabs **Hands** (control mode, hand mode, main hand, each mode's pose), **Cursor**, **Gesture tuning** (sliders for the pinch threshold, hold times and scroll speed), **Monitors** and **General**. The Preview status line names the pose each hand is making, a live pinch number, and the mode that is active.
+Three tabs: **Preview** (camera picker and live image), **Gestures** (what each gesture does: Core, then one table per mode, for action mode or cursor mode) and **Settings**, with sub-tabs **Hands** (control mode, hand mode, main hand, each mode's pose), **Cursor**, **Gesture tuning** (sliders for the pinch threshold, hold times and scroll speed), **Monitors** and **General**. The Preview status line names the pose each hand is making, a live pinch number, and the mode that is active.
 
 ## If it doesn't pick up your hand
 
@@ -148,7 +157,12 @@ The wizard sets these for you; to adjust them by hand, use **Settings → Cursor
 
 ## Monitor switching
 
-With two or more monitors, open **Settings → Monitors → Calibrate monitors**. A small window appears on each monitor in turn; look at it until it moves on. Afterwards your hand controls the monitor you are looking at, and the cursor jumps to the same spot on a monitor when you look across to it. Head turns and eye movement both count, and a quick glance doesn't trigger a switch: you have to keep looking for about half a second.
+With two or more monitors, open **Settings → Monitors → Calibrate monitors**. A small window appears on each monitor in turn; look at it until it moves on. Afterwards, keeping your eyes on a monitor for a moment makes it the one you control:
+
+- **Bring its window to the front** (on by default): the front window on that monitor gets the keyboard, so you can just start typing (Windows puts you back in the text box you last used in that window), and the cursor moves to that window's middle. On a monitor with no open window the cursor goes to the monitor's middle. With it off, the cursor keeps the same relative spot.
+- A switch waits until a gesture you are in the middle of is finished (a pinch, a swipe, a scroll, a held mode), so looking around while you gesture never pulls the cursor or keyboard away mid-gesture. Then it happens straight away.
+- **Follow: eyes** (head turns and eye movement) or **head** (head turns only). Head is steadier if eye tracking keeps losing you, but you have to turn your head toward each monitor. One calibration records both; a calibration from before version 3.4 only has eyes, so calibrate once more to use head.
+- **Switch delay** (default 400 ms): how long a look must last. **Switch threshold** (default 0.75): lower needs a clearer look before it switches. Each reading is also the middle of the last three, so a blink or one bad reading is ignored.
 
 The camera has to see your face while you look at each monitor. A monitor you can only see by turning away from the camera is left out, and the calibration tells you so. Calibrate again after moving the camera or your monitors. Turn switching off with the checkbox on the same tab.
 

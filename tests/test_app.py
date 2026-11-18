@@ -150,11 +150,13 @@ def test_action_only_mode_through_the_tracker(qapp, quiet):
     t = Tracker(cfg(control_mode="actions", hand="Right"))
     now = frames(t, 0.0, 0.3, right())  # an open hand, moving or not, does nothing
     assert quiet == []
-    now = frames(t, now, 0.5, right(thumb="index"))  # a pinch held long enough: a screenshot, not a click
+    now = frames(t, now, 0.5, right(thumb="index"))  # a pinch held long enough, then let go: a screenshot, not a click
+    now = frames(t, now, 0.4, right())
     assert combos(quiet) == ["<cmd>+<shift>+s"] and not {"press", "move", "scroll"} & {e[0] for e in quiet}
     quiet.clear()
     now = frames(t, now, 0.4, right(), left())
     now = frames(t, now, 0.5, right(thumb="index"), left(curl="imrp"))  # the other hand's fist: Edit mode, so a pinch copies
+    now = frames(t, now, 0.4, right(), left(curl="imrp"))
     assert t.mode == "Edit" and combos(quiet) == ["<ctrl>+c"] and not {"press", "move"} & {e[0] for e in quiet}
 
 

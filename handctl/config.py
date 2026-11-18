@@ -9,14 +9,18 @@ from pynput.keyboard import HotKey
 
 PATH = Path(os.environ.get("APPDATA", Path.home())) / "handctl" / "config.json"
 
-POSE_NAMES = ["Hand", "Pinch", "Pinch_Middle", "Pinch_Ring", "Pinch_Pinky", "Closed_Fist", "Thumb_Up", "Thumb_Down", "Victory", "ILoveYou"]
+POSE_NAMES = ["Hand", "Pinch", "Pinch_Middle", "Pinch_Ring", "Pinch_Pinky", "Closed_Fist", "Thumb_Up", "Thumb_Down", "Victory", "ILoveYou",
+              "Point"]
 MODE_POSES = ["Closed_Fist", "Thumb_Up", "Thumb_Down", "Victory", "ILoveYou"]  # poses the other hand can hold to pick a mode
 MODES = ["Edit", "Media", "Windows", "Browser", "System"]
 SLOTS = [p for p in POSE_NAMES if p != "Hand"]  # what the main hand can do inside a mode
 # every mapping name: a plain pose is a "core" action that works whenever no mode overrides it; "Mode/Pose" is a mode's version
 ACTION_PREFIX = "A:"  # action-only mode keeps its own mappings under this prefix, so switching modes never loses either set
 GESTURES = POSE_NAMES + [f"{mode}/{pose}" for mode in MODES for pose in SLOTS]
-ACTION_GESTURES = [ACTION_PREFIX + name for name in GESTURES]
+# action mode only: pinch and move the hand one way. A pinch let go without moving is the plain "Pinch" action
+MOTIONS = ["Swipe_Left", "Swipe_Right", "Swipe_Up", "Swipe_Down"]
+ACTION_GESTURES = [ACTION_PREFIX + name for name in
+                   POSE_NAMES + MOTIONS + [f"{mode}/{pose}" for mode in MODES for pose in SLOTS + MOTIONS]]
 ACTION_TYPES = ["none", "mouse", "keys", "shell"]
 MOUSE_VALUES = ["move", "left", "right", "middle", "scroll", "hscroll", "zoom"]
 
@@ -34,6 +38,7 @@ MAPPINGS = {
     # The reliable signals (measured on one user's camera) are the index pinch, fist, thumbs and peace sign; the middle, ring
     # and pinky pinches are bonus slots: they were mistaken for the index pinch there, so nothing important depends on them.
     "Hand": _mouse("move"),  # any open or relaxed hand
+    "Point": _mouse("move"),  # index finger up, the rest curled: also moves the cursor
     "Pinch": _mouse("left"),  # thumb + index: click; keep pinching and move to drag
     "Victory": _mouse("right", cooldown_ms=500),  # peace sign: right click, like a two-finger tap on a trackpad
     "Closed_Fist": _mouse("scroll"),  # grab and move up/down
@@ -71,31 +76,39 @@ MAPPINGS = {
     "System/Pinch_Middle": _keys("<cmd>+l", 2500), "System/Pinch_Pinky": _keys("<ctrl>+<shift>+<esc>", 1500),
 }
 
-# action-only mode: the hand never moves the cursor. One hand gets the quick, common actions on the poses that were reliable
-# in testing; the two-hand modes carry over unchanged for the less common ones.
+# action mode: the hand never aims the cursor. Simple actions are a single sign; the ones with a direction or an amount are
+# a sign plus a movement. The two-hand modes carry over unchanged for the less common actions.
 _ACTION_CORE = {
     "Hand": {"type": "none", "value": ""},  # relaxed hand: nothing happens
-    "Pinch": _keys("<cmd>+<shift>+s", 1500),  # screenshot
+    "Pinch": _keys("<cmd>+<shift>+s", 1500),  # screenshot: pinch and let go without moving
+    "Swipe_Left": _keys("<ctrl>+<shift>+<tab>", 150),  # pinch and move left: previous tab, one per step
+    "Swipe_Right": _keys("<ctrl>+<tab>", 150),  # next tab
+    "Swipe_Up": _keys("<cmd>+<tab>", 1000),  # task view, like a three-finger swipe up on a touchpad
+    "Swipe_Down": _keys("<cmd>+d", 1000),  # show desktop, like a three-finger swipe down
+    "Point": _mouse("scroll"),  # index finger up, then move the hand up or down
     "Closed_Fist": _keys("<cmd>+h", 1500),  # voice typing
-    "Thumb_Up": _keys("<ctrl>+<tab>", 800, repeat=True),  # next tab; keep holding to walk through tabs
-    "Thumb_Down": _keys("<ctrl>+<shift>+<tab>", 800, repeat=True),  # previous tab
+    "Thumb_Up": _keys("<media_volume_up>", 150, repeat=True),
+    "Thumb_Down": _keys("<media_volume_down>", 150, repeat=True),
     "Victory": _keys("<media_play_pause>", 800),
     "ILoveYou": _keys("<alt>+<tab>", 800),  # switch app
 }
-for _pose in POSE_NAMES:
+for _pose in POSE_NAMES + MOTIONS:
     MAPPINGS[ACTION_PREFIX + _pose] = _ACTION_CORE.get(_pose, {"type": "none", "value": ""})
 for _name, _m in list(MAPPINGS.items()):
     if "/" in _name and not _name.startswith(ACTION_PREFIX):
         MAPPINGS[ACTION_PREFIX + _name] = dict(_m)
-# thumbs are tabs in action-only core, so Media mode needs its own volume
-MAPPINGS[ACTION_PREFIX + "Media/Thumb_Up"] = _keys("<media_volume_up>", 150, repeat=True)
-MAPPINGS[ACTION_PREFIX + "Media/Thumb_Down"] = _keys("<media_volume_down>", 150, repeat=True)
+# earlier defaults of action-mode mappings, as (value, cooldown_ms, repeat). load() swaps a saved one still equal to one of
+# these for today's default, so untouched settings follow the new layout and edited ones stay
+_OLD_ACTION = {
+    "A:Thumb_Up": [("<ctrl>+<tab>", 500, False), ("<ctrl>+<tab>", 800, True)],
+    "A:Thumb_Down": [("<ctrl>+<shift>+<tab>", 500, False), ("<ctrl>+<shift>+<tab>", 800, True)],
+}
 
 DEFAULTS = {
-    "version": 5,  # bump when mapping names change; load() then adds the new defaults (and resets very old settings)
+    "version": 6,  # bump when mapping names change; load() then adds the new defaults (and resets very old settings)
     "camera": 0,
     "hand": "Right",  # with both hands in view, this one moves the cursor and the other one picks the mode
-    "control_mode": "cursor",  # "cursor": the hand moves the cursor; "actions": it never does, and only triggers actions
+    "control_mode": "actions",  # "actions": gestures only trigger actions; "cursor" (optional): the hand moves the cursor
     "action_hold_ms": 150,  # action-only mode: how long any pose must be held (replayed: 100 let a relaxed hand fire)
     "hand_mode": "auto",  # "auto": one hand in view does everything, two split the work; "one": only ever one hand
     "wizard_done": False,  # the first-run setup wizard opens until this is true
@@ -112,6 +125,11 @@ DEFAULTS = {
     "scroll_speed": 30,
     "monitor_switch": False,  # move the cursor to the monitor the user looks at
     "monitor_gaze": {},  # monitor device name -> [yaw, pitch] of the gaze when looking at it, from the calibration
+    "gaze_source": "eyes",  # "eyes": head turn plus eye direction; "head": head turn only (steadier, no eye tracking)
+    "monitor_head": {},  # like monitor_gaze, calibrated with gaze_source "head"
+    "monitor_focus": True,  # on a switch, bring that monitor's window to the front and put the cursor in its middle
+    "monitor_dwell_ms": 400,  # how long a look must last before the monitor switches
+    "monitor_margin": 0.75,  # how much nearer the new monitor must look than the current one (lower = steadier)
     "modes": {"Edit": "Closed_Fist", "Media": "Thumb_Up", "Windows": "Victory", "Browser": "ILoveYou", "System": "Thumb_Down"},
     "mappings": MAPPINGS,
 }
@@ -136,13 +154,13 @@ def load(path=PATH):
         data.pop("mappings", None)  # version 2 and earlier used other gesture names
         data.pop("wizard_done", None)  # what the wizard calibrates changed, so offer it once more
     # version 3 -> 4 only added mappings and modes: the user's own mappings stay, and the new ones are filled in below
-    if version == 4:  # 4 -> 5: action-only defaults changed; drop the old ones (left as they came) so the new ones apply
-        if data.get("action_hold_ms") == 250:
+    if version in (4, 5):  # action-mode defaults changed since; drop the old ones (left as they came) so the new ones apply
+        if version == 4 and data.get("action_hold_ms") == 250:
             data.pop("action_hold_ms")
         saved_mappings = data.get("mappings") if isinstance(data.get("mappings"), dict) else {}
-        for name, combo in (("A:Thumb_Up", "<ctrl>+<tab>"), ("A:Thumb_Down", "<ctrl>+<shift>+<tab>")):
+        for name, olds in _OLD_ACTION.items():
             m = saved_mappings.get(name)
-            if isinstance(m, dict) and (m.get("value"), m.get("cooldown_ms"), m.get("repeat", False)) == (combo, 500, False):
+            if isinstance(m, dict) and (m.get("value"), m.get("cooldown_ms"), m.get("repeat", False)) in olds:
                 del saved_mappings[name]
     data["version"] = DEFAULTS["version"]
     if data.get("hand_mode") in ("single", "two"):
@@ -191,6 +209,11 @@ def _mode_errors(modes):
     return errors
 
 
+def gaze_key(cfg):
+    """Where the monitor calibration for the chosen gaze source is kept."""
+    return "monitor_head" if cfg["gaze_source"] == "head" else "monitor_gaze"
+
+
 def validate(cfg):
     """Returns a list of human-readable problems; empty means OK."""
     errors = []
@@ -202,10 +225,14 @@ def validate(cfg):
     if cfg["hand_mode"] not in ("auto", "one") or cfg["hand"] not in ("Right", "Left"):
         errors.append("Hand mode must be auto or one, and the pointer hand Right or Left.")
     errors += _mode_errors(cfg["modes"])
-    if not all(isinstance(p, list) and len(p) == 2 and all(type(v) in (int, float) for v in p) for p in cfg["monitor_gaze"].values()):
+    if not all(isinstance(p, list) and len(p) == 2 and all(type(v) in (int, float) for v in p)
+               for key in ("monitor_gaze", "monitor_head") for p in cfg[key].values()):
         errors.append("Monitor calibration data is damaged. Run the monitor calibration again.")
-    if cfg["monitor_switch"] and len(cfg["monitor_gaze"]) < 2:
-        errors.append("Monitor switching needs a calibration first: Settings > Monitors > Calibrate monitors.")
+    if cfg["gaze_source"] not in ("eyes", "head"):
+        errors.append("Monitor switching must follow eyes or head.")
+    elif cfg["monitor_switch"] and len(cfg[gaze_key(cfg)]) < 2:
+        errors.append("Monitor switching needs a calibration first (one for each of eyes and head turn): "
+                      "Settings > Monitors > Calibrate monitors.")
     combos = [("Toggle hotkey", cfg["toggle_hotkey"])]
     for name, m in cfg["mappings"].items():
         if m["type"] == "keys":
