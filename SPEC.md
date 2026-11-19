@@ -1,6 +1,6 @@
 # Hand Gesture Control — v1 Spec
 
-Working name: `handctl` (placeholder, rename before publishing).
+Package name: `handctl`.
 License: MIT. Runs fully local and free: no network calls, no paid APIs.
 
 ## Goal
